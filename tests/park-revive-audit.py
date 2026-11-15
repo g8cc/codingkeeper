@@ -62,8 +62,13 @@ class ParkReviveAudit(unittest.TestCase):
 
     def test_evidence_check_rejects_verbatim_template_echo(self):
         headless = self.read('codexc-headless')
-        self.assertIn("grep -qvE '证据[:：][[:space:]]*<依据>'", headless,
-                      'echoing the discipline template verbatim is not evidence')
+        function = headless[headless.index('turn_has_evidence() {'):headless.index('\nheadless_wait_ready()')]
+        with tempfile.TemporaryDirectory(prefix='ck-evidence-', dir='/private/tmp') as tmp:
+            path = Path(tmp) / 'worker.log'
+            path.write_text('**证据**： <依据> — 请填入测试结果\n')
+            result = subprocess.run(['/bin/bash', '-c', function + '\nturn_has_evidence "$1"',
+                                     'test', str(path)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
 
     def test_watchdog_auto_revives_review_parks_within_budget(self):
         watch = self.read('burn-watch.sh')

@@ -1,0 +1,1722 @@
+{
+  "date": "2026-11-15",
+  "controller_start": "e4ccc81a80e7a71b654a702205e28b958d3479b6",
+  "scope": {
+    "real_projects_inventory_only": 20,
+    "real_project_receipts_inventory_only": 290,
+    "deep_audit_project": "sale",
+    "metadata_manifests_checked": 290,
+    "metadata_missing_or_mismatched": 0
+  },
+  "sale": {
+    "summary": {
+      "head": "55b100d47ffcfc2b2b13bf843c364e79089f8172",
+      "journal_lines": 61,
+      "journal_receipts": 28,
+      "retained_accepted": 28,
+      "receipt_evidence_missing": 0,
+      "categories": {
+        "documentation": 4,
+        "implementation": 17,
+        "regression": 7
+      },
+      "fingerprint_failures": 0,
+      "blob_references_checked": 3133,
+      "blob_errors": [],
+      "candidates_not_ancestors": 0,
+      "outside_gate_tests": [
+        "harness/tests/browser-config.test.mjs",
+        "harness/tests/browser-shell.test.mjs",
+        "harness/tests/core.test.mjs",
+        "harness/tests/runner.test.mjs",
+        "scripts/audit-regressions.test.mjs",
+        "scripts/data-load-error-visibility.test.mjs",
+        "scripts/datajs-hot-reload.test.mjs",
+        "scripts/degenerate-draft-guard.test.mjs",
+        "scripts/explicit-port-probe.test.js",
+        "scripts/generate-client-abort.test.mjs",
+        "scripts/recording.test.mjs"
+      ],
+      "resets_to_c1b0ba7": 16,
+      "receipts_without_gate": 0,
+      "receipts_without_two_final_zero_verdicts": 0
+    },
+    "receipts": [
+      {
+        "receipt": "9711a53314e5458a946548c4a5b4c0b8",
+        "time": "2026-11-07 12:27:31",
+        "task": "M3A 录制生命周期 — 目的：用户能开始、暂停、继续、结束和重新录制，失败后能重试且不遗留资源。范围：新增 recorder 纯状态机与注入副作用接口、相关新测试；先写清 idle/armed/recording/paused/stopped 的合法事件表，包含取消/重置和启动失败回退，不接真实设备。验收：每个合法/非法事件组合有可观察状态与副作用次数断言；重复 stop 不重复保存，重录产生新会话，失败释放已申请资源一次；全量既有回归通过。依赖：无；不得把提词 state.run 冒充 recorder。",
+        "baseline": "1ce0ea2402d4715d8999ce2c77584fa4c06ae327",
+        "candidate": "ed55934a7f6cd1a40341b42322f9f6c27fb9ba2e",
+        "category": "implementation",
+        "changed": [
+          ".github/workflows/harness.yml",
+          ".gitignore",
+          "README.md",
+          "app.js",
+          "docs/AUDIT-2026-11-06.md",
+          "docs/HARNESS.md",
+          "docs/SHUTDOWN-INVESTIGATION-2026-11-07.md",
+          "docs/evidence/chrome-shutdown-cleanup.txt",
+          "docs/evidence/chrome-shutdown-raw.txt",
+          "harness.sh",
+          "harness/acceptance.json",
+          "harness/browser-config.mjs",
+          "harness/browser.mjs",
+          "harness/browser/journey.browser.js",
+          "harness/browser/learning.browser.js",
+          "harness/core.mjs",
+          "harness/run.mjs",
+          "harness/syntax.mjs",
+          "harness/tests/browser-config.test.mjs",
+          "harness/tests/browser-shell.test.mjs",
+          "harness/tests/core.test.mjs",
+          "harness/tests/runner.test.mjs",
+          "practice.html",
+          "practice.js",
+          "recorder.js",
+          "recording-core.js",
+          "recording.html",
+          "recording.js",
+          "scripts/audit-regressions.test.mjs",
+          "scripts/recording-failures.browser.js",
+          "scripts/recording-smoke.browser.js",
+          "scripts/recording.test.mjs",
+          "server.js",
+          "start.sh",
+          "storage.js",
+          "tests/v2/recorder-lifecycle.test.mjs"
+        ],
+        "fingerprints_valid": true,
+        "gate_logs": 1,
+        "review_verdicts": [
+          [
+            "0"
+          ],
+          [
+            "0"
+          ]
+        ],
+        "outside_gate_tests": [
+          "harness/tests/browser-config.test.mjs",
+          "harness/tests/browser-shell.test.mjs",
+          "harness/tests/core.test.mjs",
+          "harness/tests/runner.test.mjs",
+          "scripts/audit-regressions.test.mjs",
+          "scripts/recording.test.mjs"
+        ],
+        "candidate_reachable": true
+      },
+      {
+        "receipt": "31fed10435144052b1e21acf301f5254",
+        "time": "2026-11-07 13:01:56",
+        "task": "STAB-FE-01 复制失败后的可见重试 — 目的：复制失败的用户知道结果且下一次能成功。范围：v1 复制点击路径的最小故障注入回归，仅发现失败时修 app.js。验收：clipboard Promise reject 且 execCommand false/throw 时显示“复制失败”；恢复夹具后再点击复制成功；按钮复位可预测；临时 textarea 数恢复基线、焦点回复制按钮、无 unhandled rejection；不以源码含 legacyCopy/setTimeout 作为完成依据。依赖：无；既有 app.js:769–913 是待验证基线，不要求先改代码。",
+        "baseline": "ed55934a7f6cd1a40341b42322f9f6c27fb9ba2e",
+        "candidate": "805ec56ac9c8c866a495d85758863ba0310fc9c1",
+        "category": "regression",
+        "changed": [
+          "tests/quality/stab-fe-01.test.js"
+        ],
+        "fingerprints_valid": true,
+        "gate_logs": 1,
+        "review_verdicts": [
+          [
+            "0"
+          ],
+          [
+            "0"
+          ]
+        ],
+        "outside_gate_tests": [],
+        "candidate_reachable": true
+      },
+      {
+        "receipt": "c63df5a8f16249caa19ef3e58cf78499",
+        "time": "2026-11-07 14:16:03",
+        "task": "A11Y-KEYBOARD 键盘与动态表单关键流 — 目的：无需鼠标完成学习、测验、检索、建稿与提词操作。范围：合并 A11Y-01/A11Y-04/EDGE-FE-03 的行为验收及真实缺陷最小修复，不改视觉风格。验收：Tab/Shift+Tab/Enter/Space 操作可达、焦点可见、重渲染后不掉进隐藏视图；组合输入态 Enter 不检索，组合结束后 Enter 正常提交，粘贴 emoji/RTL 内容完整、清空查询恢复列表；打开所有动态表单逐个核对 input/textarea/select 可访问名称和 label 关联；明确记录覆盖的视图与动作。依赖：现有 v1/M2b，本叶只验收现有学习/测验/检索/建稿/提词；录制/复盘增量由 M4-ACCEPT 承接；不能用“全是 button/input/a”替代行为证明。",
+        "baseline": "805ec56ac9c8c866a495d85758863ba0310fc9c1",
+        "candidate": "2fcb34ca7c2d29963fe94ebc61f72056afd6788f",
+        "category": "implementation",
+        "changed": [
+          "practice.js",
+          "scripts/a11y-keyboard.browser.js",
+          "server.js",
+          "tests/quality/a11y-keyboard.test.js"
+        ],
+        "fingerprints_valid": true,
+        "gate_logs": 2,
+        "review_verdicts": [
+          [
+            "0"
+          ],
+          [
+            "0"
+          ]
+        ],
+        "outside_gate_tests": [],
+        "candidate_reachable": true
+      },
+      {
+        "receipt": "a2b375e057d74052a2981e8f6b8ecbe2",
+        "time": "2026-11-07 14:54:40",
+        "task": "(idle 持续改进)",
+        "baseline": "2fcb34ca7c2d29963fe94ebc61f72056afd6788f",
+        "candidate": "aebe35642a5941f0de6b32f8bf73f139f3e32751",
+        "category": "regression",
+        "changed": [
+          "tests/quality/chain-correctness.test.js"
+        ],
+        "fingerprints_valid": true,
+        "gate_logs": 1,
+        "review_verdicts": [
+          [
+            "0"
+          ],
+          [
+            "0"
+          ]
+        ],
+        "outside_gate_tests": [],
+        "candidate_reachable": true
+      },
+      {
+        "receipt": "f8314849fe0b444e80fe2f703eae6eb8",
+        "time": "2026-11-07 15:20:38",
+        "task": "(idle 持续改进)",
+        "baseline": "aebe35642a5941f0de6b32f8bf73f139f3e32751",
+        "candidate": "abbb0b8fbefec7f7f2a8d5ed6589022987b9ef83",
+        "category": "implementation",
+        "changed": [
+          "app.js",
+          "tests/quality/reliability-mark-dblclick.test.js"
+        ],
+        "fingerprints_valid": true,
+        "gate_logs": 1,
+        "review_verdicts": [
+          [
+            "0"
+          ],
+          [
+            "0"
+          ]
+        ],
+        "outside_gate_tests": [],
+        "candidate_reachable": true
+      },
+      {
+        "receipt": "c3cb30d145dc44aa8960adb4069cf88e",
+        "time": "2026-11-07 15:43:25",
+        "task": "(idle 持续改进)",
+        "baseline": "abbb0b8fbefec7f7f2a8d5ed6589022987b9ef83",
+        "candidate": "f1be9a698c49377712a2c5b66e1965361810dd6f",
+        "category": "implementation",
+        "changed": [
+          "server.js",
+          "tests/quality/security-cli-sandbox.test.js",
+          "tests/v2/fixtures/zcode-cwd-report.mjs"
+        ],
+        "fingerprints_valid": true,
+        "gate_logs": 1,
+        "review_verdicts": [
+          [
+            "0"
+          ],
+          [
+            "0"
+          ]
+        ],
+        "outside_gate_tests": [],
+        "candidate_reachable": true
+      },
+      {
+        "receipt": "81bad56b4e2147f09131acc54393bb02",
+        "time": "2026-11-07 16:00:55",
+        "task": "(idle 持续改进)",
+        "baseline": "f1be9a698c49377712a2c5b66e1965361810dd6f",
+        "candidate": "8097e8d10e7f9ab3fdf9f23016a77ac00113c0c5",
+        "category": "implementation",
+        "changed": [
+          "practice.js",
+          "tests/quality/edge-text-max.test.js"
+        ],
+        "fingerprints_valid": true,
+        "gate_logs": 1,
+        "review_verdicts": [
+          [
+            "0"
+          ],
+          [
+            "0"
+          ]
+        ],
+        "outside_gate_tests": [],
+        "candidate_reachable": true
+      },
+      {
+        "receipt": "910548d45ade4a03a176fbd8b257ba9b",
+        "time": "2026-11-07 17:07:33",
+        "task": "(idle 持续改进)",
+        "baseline": "8097e8d10e7f9ab3fdf9f23016a77ac00113c0c5",
+        "candidate": "a60096df5ca694f8423f1bb25377f37fafb28c85",
+        "category": "regression",
+        "changed": [
+          "tests/quality/cross-tab-sync.test.js"
+        ],
+        "fingerprints_valid": true,
+        "gate_logs": 3,
+        "review_verdicts": [
+          [
+            "2"
+          ],
+          [
+            "0"
+          ],
+          [
+            "1"
+          ],
+          [
+            "1"
+          ],
+          [
+            "0"
+          ],
+          [
+            "0"
+          ]
+        ],
+        "outside_gate_tests": [],
+        "candidate_reachable": true
+      },
+      {
+        "receipt": "6dde4308a29e43adbc3edba8eb2d3398",
+        "time": "2026-11-08 00:44:18",
+        "task": "(idle 持续改进)",
+        "baseline": "a60096df5ca694f8423f1bb25377f37fafb28c85",
+        "candidate": "737333adfc14d38d22bbeded1d0f048e99b33060",
+        "category": "implementation",
+        "changed": [
+          "README.md",
+          "docs/evidence/correctness-chain-probe.txt",
+          "docs/evidence/firstscan-window-honest-docs.txt",
+          "docs/evidence/gate-after-port-probe.txt",
+          "docs/evidence/port-probe-run.txt",
+          "docs/evidence/readme-probe-note-verification.txt",
+          "docs/evidence/review-fix-verification.txt",
+          "practice.js",
+          "scripts/explicit-port-probe.test.js",
+          "server.js",
+          "teleprompter.js",
+          "tests/quality/teleprompter-perf.test.js",
+          "tests/v2/countchars-caliber.test.mjs"
+        ],
+        "fingerprints_valid": true,
+        "gate_logs": 10,
+        "review_verdicts": [
+          [
+            "1"
+          ],
+          [
+            "2"
+          ],
+          [
+            "1"
+          ],
+          [
+            "1"
+          ],
+          [
+            "1"
+          ],
+          [
+            "1"
+          ],
+          [
+            "0"
+          ],
+          [
+            "1"
+          ],
+          [
+            "0"
+          ],
+          [
+            "0"
+          ]
+        ],
+        "outside_gate_tests": [
+          "scripts/explicit-port-probe.test.js"
+        ],
+        "candidate_reachable": true
+      },
+      {
+        "receipt": "1b17eac772c34dcb8907c88412a5f32f",
+        "time": "2026-11-08 00:59:32",
+        "task": "(idle 持续改进)",
+        "baseline": "737333adfc14d38d22bbeded1d0f048e99b33060",
+        "candidate": "e6e8244e0aaf175e1302d136295d4560c88b0e6d",
+        "category": "implementation",
+        "changed": [
+          "docs/evidence/static-abort-fd-fix.txt",
+          "server.js",
+          "tests/v2/static-abort-fd.test.mjs"
+        ],
+        "fingerprints_valid": true,
+        "gate_logs": 1,
+        "review_verdicts": [
+          [
+            "0"
+          ],
+          [
+            "0"
+          ]
+        ],
+        "outside_gate_tests": [],
+        "candidate_reachable": true
+      },
+      {
+        "receipt": "823f54f98c214f1f81ca3385e10826c8",
+        "time": "2026-11-08 01:16:58",
+        "task": "(idle 持续改进)",
+        "baseline": "e6e8244e0aaf175e1302d136295d4560c88b0e6d",
+        "candidate": "f4fbc0e337b46e7e8bd8a9b161de191844f9b91a",
+        "category": "regression",
+        "changed": [
+          "docs/evidence/static-symlink-boundary.txt",
+          "tests/v2/static-symlink-escape.test.mjs"
+        ],
+        "fingerprints_valid": true,
+        "gate_logs": 2,
+        "review_verdicts": [
+          [
+            "0"
+          ],
+          [
+            "2"
+          ],
+          [
+            "0"
+          ],
+          [
+            "0"
+          ]
+        ],
+        "outside_gate_tests": [],
+        "candidate_reachable": true
+      },
+      {
+        "receipt": "58f91a161b574cc2927725ac506b57f2",
+        "time": "2026-11-08 01:25:47",
+        "task": "(idle 持续改进)",
+        "baseline": "f4fbc0e337b46e7e8bd8a9b161de191844f9b91a",
+        "candidate": "fae20b966f4ddf987f47b7054cd3f6a9bfa26c1b",
+        "category": "implementation",
+        "changed": [
+          "docs/evidence/degenerate-draft-guard.txt",
+          "practice.js",
+          "scripts/degenerate-draft-guard.test.mjs"
+        ],
+        "fingerprints_valid": true,
+        "gate_logs": 1,
+        "review_verdicts": [
+          [
+            "0"
+          ],
+          [
+            "0"
+          ]
+        ],
+        "outside_gate_tests": [
+          "scripts/degenerate-draft-guard.test.mjs"
+        ],
+        "candidate_reachable": true
+      },
+      {
+        "receipt": "a28f08f556c74754b96345a66fadbb97",
+        "time": "2026-11-08 01:59:39",
+        "task": "(idle 持续改进)",
+        "baseline": "fae20b966f4ddf987f47b7054cd3f6a9bfa26c1b",
+        "candidate": "c968bd616526b912628a0fe69d6431a8f1c6c991",
+        "category": "regression",
+        "changed": [
+          "docs/evidence/practice-pause-wall-coverage.txt",
+          "tests/v2/practice-pause-wall.test.mjs"
+        ],
+        "fingerprints_valid": true,
+        "gate_logs": 3,
+        "review_verdicts": [
+          [
+            "0"
+          ],
+          [
+            "2"
+          ],
+          [
+            "0"
+          ],
+          [
+            "1"
+          ],
+          [
+            "0"
+          ],
+          [
+            "0"
+          ]
+        ],
+        "outside_gate_tests": [],
+        "candidate_reachable": true
+      },
+      {
+        "receipt": "197b02eb00a44a93893d323ff269c78e",
+        "time": "2026-11-08 02:08:10",
+        "task": "(idle 持续改进)",
+        "baseline": "c968bd616526b912628a0fe69d6431a8f1c6c991",
+        "candidate": "4185b0b8a2370196dd5ef10edbadcb56cfcf5416",
+        "category": "implementation",
+        "changed": [
+          "docs/evidence/static-req-syscall-perf.txt",
+          "server.js"
+        ],
+        "fingerprints_valid": true,
+        "gate_logs": 1,
+        "review_verdicts": [
+          [
+            "0"
+          ],
+          [
+            "0"
+          ]
+        ],
+        "outside_gate_tests": [],
+        "candidate_reachable": true
+      },
+      {
+        "receipt": "38fc2ab95a1548b1b89af4883b1aca52",
+        "time": "2026-11-08 02:19:42",
+        "task": "(idle 持续改进)",
+        "baseline": "4185b0b8a2370196dd5ef10edbadcb56cfcf5416",
+        "candidate": "34ff785a3df0a6dd574cf771bb65a84f2bd39315",
+        "category": "implementation",
+        "changed": [
+          "docs/evidence/data-load-error-visibility.txt",
+          "scripts/data-load-error-visibility.test.mjs",
+          "server.js"
+        ],
+        "fingerprints_valid": true,
+        "gate_logs": 1,
+        "review_verdicts": [
+          [
+            "0"
+          ],
+          [
+            "0"
+          ]
+        ],
+        "outside_gate_tests": [
+          "scripts/data-load-error-visibility.test.mjs"
+        ],
+        "candidate_reachable": true
+      },
+      {
+        "receipt": "5e4cc8a9b26f41c588bb37e39cde39b8",
+        "time": "2026-11-08 02:28:01",
+        "task": "(idle 持续改进)",
+        "baseline": "34ff785a3df0a6dd574cf771bb65a84f2bd39315",
+        "candidate": "b3e326f877eaa8e8883196a49cd1097b6ee89909",
+        "category": "implementation",
+        "changed": [
+          "docs/evidence/zcode-envelope-pretty-fix.txt",
+          "server.js",
+          "tests/v2/zcode-envelope-pretty.test.mjs"
+        ],
+        "fingerprints_valid": true,
+        "gate_logs": 1,
+        "review_verdicts": [
+          [
+            "0"
+          ],
+          [
+            "0"
+          ]
+        ],
+        "outside_gate_tests": [],
+        "candidate_reachable": true
+      },
+      {
+        "receipt": "f2ad2af550c3425e940900e8169b7139",
+        "time": "2026-11-08 02:35:31",
+        "task": "(idle 持续改进)",
+        "baseline": "b3e326f877eaa8e8883196a49cd1097b6ee89909",
+        "candidate": "4b719f6db2dcfe5cdc82aece8d40365201e2f762",
+        "category": "implementation",
+        "changed": [
+          "docs/evidence/rowheight-single-source.txt",
+          "practice.js",
+          "teleprompter.js",
+          "tests/v2/pxpersec-rowheight-caliber.test.mjs"
+        ],
+        "fingerprints_valid": true,
+        "gate_logs": 1,
+        "review_verdicts": [
+          [
+            "0"
+          ],
+          [
+            "0"
+          ]
+        ],
+        "outside_gate_tests": [],
+        "candidate_reachable": true
+      },
+      {
+        "receipt": "122c0ea154a14e0099a2b4141ef1c2c6",
+        "time": "2026-11-08 02:42:51",
+        "task": "(idle 持续改进)",
+        "baseline": "4b719f6db2dcfe5cdc82aece8d40365201e2f762",
+        "candidate": "f64178e961d85b2a9ad0458fd97bd646a947dd41",
+        "category": "implementation",
+        "changed": [
+          "docs/evidence/datajs-hot-reload.txt",
+          "scripts/datajs-hot-reload.test.mjs",
+          "server.js"
+        ],
+        "fingerprints_valid": true,
+        "gate_logs": 1,
+        "review_verdicts": [
+          [
+            "0"
+          ],
+          [
+            "0"
+          ]
+        ],
+        "outside_gate_tests": [
+          "scripts/datajs-hot-reload.test.mjs"
+        ],
+        "candidate_reachable": true
+      },
+      {
+        "receipt": "36df6cd48ff74bfd96120732353d9387",
+        "time": "2026-11-08 02:48:32",
+        "task": "(idle 持续改进)",
+        "baseline": "f64178e961d85b2a9ad0458fd97bd646a947dd41",
+        "candidate": "09f1ed55bb59b4150cc3f93916c5fd212ec950f2",
+        "category": "documentation",
+        "changed": [
+          "docs/evidence/correctness-newest-surfaces-e2e.txt"
+        ],
+        "fingerprints_valid": true,
+        "gate_logs": 1,
+        "review_verdicts": [
+          [
+            "0"
+          ],
+          [
+            "0"
+          ]
+        ],
+        "outside_gate_tests": [],
+        "candidate_reachable": true
+      },
+      {
+        "receipt": "2833b6ddd9bb4af19ddb88b5607f7a24",
+        "time": "2026-11-08 09:56:33",
+        "task": "(idle 持续改进)",
+        "baseline": "09f1ed55bb59b4150cc3f93916c5fd212ec950f2",
+        "candidate": "3a035106247f4819fc3c34dc31e521804d4cc600",
+        "category": "implementation",
+        "changed": [
+          "docs/evidence/generate-client-abort.txt",
+          "docs/evidence/security-sweep-host-path.txt",
+          "scripts/generate-client-abort.test.mjs",
+          "server.js"
+        ],
+        "fingerprints_valid": true,
+        "gate_logs": 3,
+        "review_verdicts": [
+          [
+            "0"
+          ],
+          [
+            "0"
+          ],
+          [
+            "0"
+          ]
+        ],
+        "outside_gate_tests": [
+          "scripts/generate-client-abort.test.mjs"
+        ],
+        "candidate_reachable": true
+      },
+      {
+        "receipt": "a9572cabadc54523b0ddcd700ccea50c",
+        "time": "2026-11-08 10:11:46",
+        "task": "(idle 持续改进)",
+        "baseline": "3a035106247f4819fc3c34dc31e521804d4cc600",
+        "candidate": "3ad7cb9e76fbbf019c12454f75506db7722dc39f",
+        "category": "implementation",
+        "changed": [
+          "docs/evidence/generate-rankscripts-robust.txt",
+          "server.js",
+          "tests/v2/generate-rankscripts-robust.test.mjs"
+        ],
+        "fingerprints_valid": true,
+        "gate_logs": 1,
+        "review_verdicts": [
+          [
+            "0"
+          ],
+          [
+            "0"
+          ]
+        ],
+        "outside_gate_tests": [],
+        "candidate_reachable": true
+      },
+      {
+        "receipt": "dc70848c088849e29c5fa5fade66964e",
+        "time": "2026-11-08 10:52:04",
+        "task": "(idle 持续改进)",
+        "baseline": "3ad7cb9e76fbbf019c12454f75506db7722dc39f",
+        "candidate": "f7856c7bf993aba112fc1c47174eabc6ab24a367",
+        "category": "implementation",
+        "changed": [
+          "docs/evidence/focus-delta-perf.txt",
+          "docs/evidence/gate-flake-8787-external-holder.txt",
+          "docs/evidence/keyboard-nav-coverage.txt",
+          "practice.js",
+          "tests/quality/keyboard-nav.test.js",
+          "tests/v2/practice-focus-delta.test.mjs"
+        ],
+        "fingerprints_valid": true,
+        "gate_logs": 3,
+        "review_verdicts": [
+          [
+            "0"
+          ],
+          [
+            "0"
+          ]
+        ],
+        "outside_gate_tests": [],
+        "candidate_reachable": true
+      },
+      {
+        "receipt": "c908ce50b7af414397de315a59a9d46a",
+        "time": "2026-11-08 11:14:07",
+        "task": "(idle 持续改进)",
+        "baseline": "f7856c7bf993aba112fc1c47174eabc6ab24a367",
+        "candidate": "2f05dbe70054dad11b820b6ad2fa9c7f8e22e9bf",
+        "category": "implementation",
+        "changed": [
+          "docs/evidence/gate-flake-recurrence-analysis.txt",
+          "docs/evidence/static-read-error-visibility.txt",
+          "server.js",
+          "tests/v2/static-read-error-visibility.test.mjs"
+        ],
+        "fingerprints_valid": true,
+        "gate_logs": 2,
+        "review_verdicts": [
+          [
+            "0"
+          ],
+          [
+            "0"
+          ]
+        ],
+        "outside_gate_tests": [],
+        "candidate_reachable": true
+      },
+      {
+        "receipt": "18fe28766d3c4977a0c1a749edd5aaa8",
+        "time": "2026-11-08 11:24:28",
+        "task": "(idle 持续改进)",
+        "baseline": "2f05dbe70054dad11b820b6ad2fa9c7f8e22e9bf",
+        "candidate": "b21436a711d2607c499925192b295bb11879fa60",
+        "category": "regression",
+        "changed": [
+          "docs/evidence/page-script-graph.txt",
+          "tests/v2/page-script-graph.test.mjs"
+        ],
+        "fingerprints_valid": true,
+        "gate_logs": 1,
+        "review_verdicts": [
+          [
+            "0"
+          ],
+          [
+            "0"
+          ]
+        ],
+        "outside_gate_tests": [],
+        "candidate_reachable": true
+      },
+      {
+        "receipt": "626a6a05a79c4c74aae433662e420a54",
+        "time": "2026-11-08 11:34:54",
+        "task": "(idle 持续改进)",
+        "baseline": "b21436a711d2607c499925192b295bb11879fa60",
+        "candidate": "dc1f7ab08618ff2a6a8a323dc5077a16a42a9821",
+        "category": "documentation",
+        "changed": [
+          "docs/evidence/maintainability-drift-rescan.txt"
+        ],
+        "fingerprints_valid": true,
+        "gate_logs": 1,
+        "review_verdicts": [
+          [
+            "0"
+          ],
+          [
+            "0"
+          ]
+        ],
+        "outside_gate_tests": [],
+        "candidate_reachable": true
+      },
+      {
+        "receipt": "aa515e8641cb4c6296bf9cb2764735e8",
+        "time": "2026-11-08 11:50:04",
+        "task": "(idle 持续改进)",
+        "baseline": "dc1f7ab08618ff2a6a8a323dc5077a16a42a9821",
+        "candidate": "cb747101b5ce6e18e351d3bf494c0a1acafdc8b5",
+        "category": "documentation",
+        "changed": [
+          "docs/evidence/harness-doc-audit.txt"
+        ],
+        "fingerprints_valid": true,
+        "gate_logs": 1,
+        "review_verdicts": [
+          [
+            "0"
+          ],
+          [
+            "0"
+          ]
+        ],
+        "outside_gate_tests": [],
+        "candidate_reachable": true
+      },
+      {
+        "receipt": "f67c8cc403f64a088e4801abab4ee12f",
+        "time": "2026-11-08 12:00:32",
+        "task": "(idle 持续改进)",
+        "baseline": "cb747101b5ce6e18e351d3bf494c0a1acafdc8b5",
+        "candidate": "c1b0ba70506a0647105da61ad04fb6675f027eb0",
+        "category": "documentation",
+        "changed": [
+          "docs/evidence/abort-cleanup-verification.txt"
+        ],
+        "fingerprints_valid": true,
+        "gate_logs": 1,
+        "review_verdicts": [
+          [
+            "0"
+          ],
+          [
+            "0"
+          ]
+        ],
+        "outside_gate_tests": [],
+        "candidate_reachable": true
+      },
+      {
+        "receipt": "6c686b626e3442d98ae19a32bca27570",
+        "time": "2026-11-14 08:42:02",
+        "task": "(idle 持续改进)",
+        "baseline": "c1b0ba70506a0647105da61ad04fb6675f027eb0",
+        "candidate": "3a1636f4730d476e97f243dc482adceae36dd658",
+        "category": "regression",
+        "changed": [
+          "docs/evidence/convert-happy-coverage.txt",
+          "docs/evidence/degenerate-scenario-coverage.txt",
+          "scripts/degenerate-draft-guard.test.mjs",
+          "tests/v2/practice-convert-happy.test.mjs"
+        ],
+        "fingerprints_valid": true,
+        "gate_logs": 5,
+        "review_verdicts": [
+          [
+            "3"
+          ],
+          [
+            "3"
+          ],
+          [
+            "2"
+          ],
+          [
+            "1"
+          ],
+          [
+            "1"
+          ],
+          [
+            "1"
+          ],
+          [
+            "0"
+          ],
+          [
+            "0"
+          ]
+        ],
+        "outside_gate_tests": [
+          "scripts/degenerate-draft-guard.test.mjs"
+        ],
+        "candidate_reachable": true
+      }
+    ]
+  },
+  "replays": [
+    {
+      "label": "hot-reload-baseline",
+      "exit": 1,
+      "seconds": 0.41,
+      "counts": {
+        "tests": 1,
+        "pass": 0,
+        "fail": 1,
+        "skipped": 0
+      },
+      "log": "hot-reload-baseline.log",
+      "sha256": "5ea4d0d7aa3a74f1a71ccbe49da91e94408a76085c71dd419562246ec8ead1c4",
+      "command": {
+        "cwd": "/private/tmp/ck-execution-audit-20261115/hot-reload-baseline",
+        "command": [
+          "node",
+          "--test",
+          "scripts/datajs-hot-reload.test.mjs"
+        ],
+        "RUN_REAL_AI": "0"
+      },
+      "failure_excerpt": "ℹ pass 0\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 272.391236\n\n✖ failing tests:\n\ntest at scripts/datajs-hot-reload.test.mjs:24:1\n✖ 编辑 data.js 后无需重启, 下一次生成的 prompt 使用新知识库 (87.664825ms)\n  AssertionError [ERR_ASSERTION]: 第二次请求应使用编辑后的知识库 (实际 仍是旧版 — require 缓存未失效: …话术库参考 (按主题相关性排序, 节选)\n  【筛·L】MARKER_A_aaa\n  \n  ## 输出要求\n  只输出一个 JSON 对象, 不要有任何解释、前后缀或 markdown 代码围栏。schema:\n  {\"scenario\":\"场景枚举值\",\"topic\":\"主题\",\"durationTargetSec\":数字,\"secti)\n      at TestContext.<anonymous> (file:///private/tmp/ck-execution-audit-20261115/hot-reload-baseline/scripts/datajs-hot-reload.test.mjs:55:12)\n      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\n      at async Test.run (node:internal/test_runner/test:1332:7)\n      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {\n    generatedMessage: false,\n    code: 'ERR_ASSERTION',\n    actual: false,\n    expected: true,\n    operator: '==',\n    diff: 'simple'\n  }"
+    },
+    {
+      "label": "hot-reload-candidate",
+      "exit": 0,
+      "seconds": 0.4,
+      "counts": {
+        "tests": 1,
+        "pass": 1,
+        "fail": 0,
+        "skipped": 0
+      },
+      "log": "hot-reload-candidate.log",
+      "sha256": "22687d659614bb92f13c0c9eaa8e5901408b5eedbb21f96322a217b947c4100f",
+      "command": {
+        "cwd": "/private/tmp/ck-execution-audit-20261115/hot-reload-candidate",
+        "command": [
+          "node",
+          "--test",
+          "scripts/datajs-hot-reload.test.mjs"
+        ],
+        "RUN_REAL_AI": "0"
+      }
+    },
+    {
+      "label": "hot-reload-current",
+      "exit": 0,
+      "seconds": 0.51,
+      "counts": {
+        "tests": 1,
+        "pass": 1,
+        "fail": 0,
+        "skipped": 0
+      },
+      "log": "hot-reload-current.log",
+      "sha256": "1a896b2f882c39aa67d749e64b2118278159104e94faacaa14e1d0222b967b7d",
+      "command": {
+        "cwd": "/private/tmp/ck-execution-audit-20261115/current",
+        "command": [
+          "node",
+          "--test",
+          "scripts/datajs-hot-reload.test.mjs"
+        ],
+        "RUN_REAL_AI": "0"
+      }
+    },
+    {
+      "label": "client-abort-baseline",
+      "exit": 1,
+      "seconds": 11.16,
+      "counts": {
+        "tests": 2,
+        "pass": 0,
+        "fail": 2,
+        "skipped": 0
+      },
+      "log": "client-abort-baseline.log",
+      "sha256": "96498a3862fc880aec719c10154a3a3398802dad90678cde9fe2aa09dbf43588",
+      "command": {
+        "cwd": "/private/tmp/ck-execution-audit-20261115/client-abort-baseline",
+        "command": [
+          "node",
+          "--test",
+          "scripts/generate-client-abort.test.mjs"
+        ],
+        "RUN_REAL_AI": "0"
+      },
+      "failure_excerpt": "  completed rc=0 @2510ms\n  \n      at TestContext.<anonymous> (file:///private/tmp/ck-execution-audit-20261115/client-abort-baseline/scripts/generate-client-abort.test.mjs:80:12)\n      at async Test.run (node:internal/test_runner/test:1332:7)\n      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {\n    generatedMessage: false,\n    code: 'ERR_ASSERTION',\n    actual: false,\n    expected: true,\n    operator: '==',\n    diff: 'simple'\n  }\n\ntest at scripts/generate-client-abort.test.mjs:88:1\n✖ 真实 runCliReal 路径 (ZCODE_CJS 指向假 CLI): 同口径终止 (5427.162638ms)\n  AssertionError [ERR_ASSERTION]: runCliReal 路径断连后 CLI 应被终止, 实际轨迹: completed rc=0 @2504ms\n  completed rc=0 @2504ms\n  \n      at TestContext.<anonymous> (file:///private/tmp/ck-execution-audit-20261115/client-abort-baseline/scripts/generate-client-abort.test.mjs:95:12)\n      at async Test.run (node:internal/test_runner/test:1332:7)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {\n    generatedMessage: false,\n    code: 'ERR_ASSERTION',\n    actual: false,\n    expected: true,\n    operator: '==',\n    diff: 'simple'\n  }"
+    },
+    {
+      "label": "client-abort-candidate",
+      "exit": 0,
+      "seconds": 6.71,
+      "counts": {
+        "tests": 2,
+        "pass": 2,
+        "fail": 0,
+        "skipped": 0
+      },
+      "log": "client-abort-candidate.log",
+      "sha256": "a39617a96e1a9adb14548990d5854497164f3eb2d6b11a15687e3ab8d8da628a",
+      "command": {
+        "cwd": "/private/tmp/ck-execution-audit-20261115/client-abort-candidate",
+        "command": [
+          "node",
+          "--test",
+          "scripts/generate-client-abort.test.mjs"
+        ],
+        "RUN_REAL_AI": "0"
+      }
+    },
+    {
+      "label": "client-abort-current",
+      "exit": 0,
+      "seconds": 6.84,
+      "counts": {
+        "tests": 2,
+        "pass": 2,
+        "fail": 0,
+        "skipped": 0
+      },
+      "log": "client-abort-current.log",
+      "sha256": "6f10c55ac71b15c71803ea2e4e241688f695c2939ce839b2d0117235054b1d54",
+      "command": {
+        "cwd": "/private/tmp/ck-execution-audit-20261115/current",
+        "command": [
+          "node",
+          "--test",
+          "scripts/generate-client-abort.test.mjs"
+        ],
+        "RUN_REAL_AI": "0"
+      }
+    },
+    {
+      "label": "dirty-knowledge-baseline",
+      "exit": 1,
+      "seconds": 0.29,
+      "counts": {
+        "tests": 3,
+        "pass": 1,
+        "fail": 2,
+        "skipped": 0
+      },
+      "log": "dirty-knowledge-baseline.log",
+      "sha256": "3d5212fa2bd50c47cee913ac9cccd0bea9cc548e8ef925b025ad6180fafb9167",
+      "command": {
+        "cwd": "/private/tmp/ck-execution-audit-20261115/dirty-knowledge-baseline",
+        "command": [
+          "node",
+          "--test",
+          "tests/v2/generate-rankscripts-robust.test.mjs"
+        ],
+        "RUN_REAL_AI": "0"
+      },
+      "failure_excerpt": "\n✖ failing tests:\n\ntest at tests/v2/generate-rankscripts-robust.test.mjs:18:1\n✖ rankScripts: null/非对象条目剔除不崩链, 合法条目排序语义不变 (4.071382ms)\n  TypeError: Cannot read properties of null (reading 'keywords')\n      at /private/tmp/ck-execution-audit-20261115/dirty-knowledge-baseline/server.js:153:53\n      at Array.map (<anonymous>)\n      at Object.rankScripts (/private/tmp/ck-execution-audit-20261115/dirty-knowledge-baseline/server.js:153:6)\n      at TestContext.<anonymous> (file:///private/tmp/ck-execution-audit-20261115/dirty-knowledge-baseline/tests/v2/generate-rankscripts-robust.test.mjs:27:20)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1325:25)\n      at Test.start (node:internal/test_runner/test:1191:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:385:17)\n\ntest at tests/v2/generate-rankscripts-robust.test.mjs:32:1\n✖ buildGeneratePrompt: scripts/chapters 含脏条目 → 正常出稿不抛 (0.462856ms)\n  TypeError: Cannot read properties of null (reading 'keywords')\n      at /private/tmp/ck-execution-audit-20261115/dirty-knowledge-baseline/server.js:153:53\n      at Array.map (<anonymous>)\n      at rankScripts (/private/tmp/ck-execution-audit-20261115/dirty-knowledge-baseline/server.js:153:6)\n      at Object.buildGeneratePrompt (/private/tmp/ck-execution-audit-20261115/dirty-knowledge-baseline/server.js:191:21)\n      at TestContext.<anonymous> (file:///private/tmp/ck-execution-audit-20261115/dirty-knowledge-baseline/tests/v2/generate-rankscripts-robust.test.mjs:33:25)\n      at Test.runInAsyncScope (node:async_hooks:227:14)\n      at Test.run (node:internal/test_runner/test:1325:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:911:18)\n      at Test.postRun (node:internal/test_runner/test:1465:19)\n      at Test.run (node:internal/test_runner/test:1390:12)"
+    },
+    {
+      "label": "dirty-knowledge-candidate",
+      "exit": 0,
+      "seconds": 0.3,
+      "counts": {
+        "tests": 3,
+        "pass": 3,
+        "fail": 0,
+        "skipped": 0
+      },
+      "log": "dirty-knowledge-candidate.log",
+      "sha256": "9bf01c0e016c0e0755d4e64db74952b3c59d5104704d06d052ef3b934376c0bc",
+      "command": {
+        "cwd": "/private/tmp/ck-execution-audit-20261115/dirty-knowledge-candidate",
+        "command": [
+          "node",
+          "--test",
+          "tests/v2/generate-rankscripts-robust.test.mjs"
+        ],
+        "RUN_REAL_AI": "0"
+      }
+    },
+    {
+      "label": "dirty-knowledge-current",
+      "exit": 0,
+      "seconds": 0.35,
+      "counts": {
+        "tests": 3,
+        "pass": 3,
+        "fail": 0,
+        "skipped": 0
+      },
+      "log": "dirty-knowledge-current.log",
+      "sha256": "efd21c97aa6413ea3e776d8b9db4485b2b7d5e5e35f362c46638649b83f86bee",
+      "command": {
+        "cwd": "/private/tmp/ck-execution-audit-20261115/current",
+        "command": [
+          "node",
+          "--test",
+          "tests/v2/generate-rankscripts-robust.test.mjs"
+        ],
+        "RUN_REAL_AI": "0"
+      }
+    },
+    {
+      "label": "current-harness-verify",
+      "exit": 0,
+      "seconds": 61.94,
+      "counts": {},
+      "log": "current-harness-verify.log",
+      "sha256": "f0f0aa36db56340a4499e79cd79a946891770ad89a2df26b2cd24de3dae6ac12",
+      "command": {
+        "cwd": "/private/tmp/ck-execution-audit-20261115/current",
+        "command": [
+          "node",
+          "harness/run.mjs",
+          "verify"
+        ],
+        "RUN_REAL_AI": "0"
+      }
+    },
+    {
+      "label": "discarded-shutdown-current",
+      "exit": 1,
+      "seconds": 17.51,
+      "counts": {
+        "tests": 5,
+        "pass": 3,
+        "fail": 2,
+        "skipped": 0
+      },
+      "log": "discarded-shutdown-current.log",
+      "sha256": "34bb7c0b6f37d82c09442e6753b82d7ccdc665ad0e19a4d50d75d84bcba81c7e",
+      "command": {
+        "cwd": "/private/tmp/ck-execution-audit-20261115/current",
+        "command": [
+          "node",
+          "--test",
+          "scripts/server-signal-shutdown.test.mjs"
+        ],
+        "RUN_REAL_AI": "0"
+      },
+      "failure_excerpt": "  \n      at TestContext.<anonymous> (file:///private/tmp/ck-execution-audit-20261115/current/scripts/server-signal-shutdown.test.mjs:81:10)\n      at async Test.run (node:internal/test_runner/test:1332:7)\n      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {\n    generatedMessage: false,\n    code: 'ERR_ASSERTION',\n    actual: false,\n    expected: true,\n    operator: '==',\n    diff: 'simple'\n  }\n\ntest at scripts/server-signal-shutdown.test.mjs:150:1\n✖ 不合规 CLI (忽略 SIGTERM) → SIGKILL 升级必须先于服务退出 (不产生孤儿), 目录无残留 (5825.531079ms)\n  AssertionError [ERR_ASSERTION]: 私有目录应无残留, 实得 1\n  \n  1 !== 0\n  \n      at TestContext.<anonymous> (file:///private/tmp/ck-execution-audit-20261115/current/scripts/server-signal-shutdown.test.mjs:199:10)\n      at async Test.run (node:internal/test_runner/test:1332:7)\n      at async Test.processPendingSubtests (node:internal/test_runner/test:911:7) {\n    generatedMessage: false,\n    code: 'ERR_ASSERTION',\n    actual: 1,\n    expected: 0,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }"
+    }
+  ],
+  "harness": {
+    "verify": {
+      "id": "2026-11-15T05-35-17-575Z-93070",
+      "status": "PASS",
+      "platform": "v24.18.0 darwin/x64",
+      "stable": true,
+      "contractsStable": true,
+      "stages": [
+        {
+          "name": "doctor",
+          "status": "PASS",
+          "durationMs": 126,
+          "log": "doctor.log"
+        },
+        {
+          "name": "syntax",
+          "status": "PASS",
+          "durationMs": 3901,
+          "log": "syntax.log"
+        },
+        {
+          "name": "offline",
+          "status": "PASS",
+          "counts": {
+            "tests": 328,
+            "pass": 327,
+            "fail": 0,
+            "cancelled": 0,
+            "skipped": 1,
+            "todo": 0,
+            "duration_ms": 57376.954851
+          },
+          "skips": [
+            {
+              "name": "真实 zcode CLI 全链路: 默认路径 POST /api/generate → 200 合规稿",
+              "reason": "需要 RUN_REAL_AI=1 (真实 zcode CLI 集成测试, 默认 skip; 接入验证由控制器人工冒烟)"
+            }
+          ],
+          "durationMs": 57481,
+          "log": "offline.log"
+        },
+        {
+          "name": "integrity",
+          "status": "PASS",
+          "log": "source-after.json"
+        }
+      ],
+      "pending": [
+        "hardware: 真实麦克风/摄像头授权、撤销、断开和长时间录制",
+        "safari: macOS/iOS Safari 编码、播放、下载与后台恢复",
+        "file: 目标浏览器 file:// 双击学习与本地存储策略",
+        "real-ai: 明确授权后 RUN_REAL_AI=1 验证真实模型认证、配额与生成质量"
+      ],
+      "source_sha256": "03c6bc29e08af57e6a1bce462c3138959f3de34fa67ceed02438e71b32ffa8d1"
+    },
+    "browser": {
+      "id": "2026-11-15T05-42-45-000Z-17380",
+      "status": "PASS",
+      "platform": "v24.18.0 darwin/x64",
+      "stable": true,
+      "contractsStable": true,
+      "stages": [
+        {
+          "name": "doctor",
+          "status": "PASS",
+          "durationMs": 84,
+          "log": "doctor.log"
+        },
+        {
+          "name": "browser-diagnostics",
+          "status": "PASS",
+          "durationMs": 1615,
+          "log": "browser-diagnostics.log",
+          "artifacts": [
+            "diagnostics-probe-c0-p0.png",
+            "diagnostics-probe-c0.zip"
+          ]
+        },
+        {
+          "name": "browser-learning",
+          "status": "PASS",
+          "durationMs": 2156,
+          "log": "browser-learning.log",
+          "artifacts": []
+        },
+        {
+          "name": "browser-journey",
+          "status": "PASS",
+          "durationMs": 5257,
+          "log": "browser-journey.log",
+          "artifacts": []
+        },
+        {
+          "name": "browser-recording",
+          "status": "PASS",
+          "durationMs": 6042,
+          "log": "browser-recording.log",
+          "artifacts": []
+        },
+        {
+          "name": "browser-recording-failures",
+          "status": "PASS",
+          "durationMs": 3871,
+          "log": "browser-recording-failures.log",
+          "artifacts": []
+        },
+        {
+          "name": "browser-close",
+          "status": "PASS",
+          "log": "browser-close.log",
+          "durationMs": 303
+        },
+        {
+          "name": "integrity",
+          "status": "PASS",
+          "log": "source-after.json"
+        }
+      ],
+      "pending": [
+        "hardware: 真实麦克风/摄像头授权、撤销、断开和长时间录制",
+        "safari: macOS/iOS Safari 编码、播放、下载与后台恢复",
+        "file: 目标浏览器 file:// 双击学习与本地存储策略",
+        "real-ai: 明确授权后 RUN_REAL_AI=1 验证真实模型认证、配额与生成质量"
+      ],
+      "source_sha256": "03c6bc29e08af57e6a1bce462c3138959f3de34fa67ceed02438e71b32ffa8d1",
+      "flows": {
+        "learning": {
+          "progress": "1/34 课时",
+          "score": "100 分",
+          "searchCleared": true,
+          "errors": [],
+          "diagnostics": {
+            "events": [
+              {
+                "type": "navigation",
+                "url": "http://127.0.0.1:49920/index.html"
+              },
+              {
+                "type": "navigation",
+                "url": "http://127.0.0.1:49920/index.html"
+              }
+            ],
+            "cleanup": [
+              {
+                "context": 0,
+                "durationMs": 21,
+                "status": "PASS"
+              }
+            ],
+            "browserVersion": "157.0.8103.51"
+          }
+        },
+        "journey": {
+          "draftId": "47bb45c5-beeb-4998-af40-dd93be6df261",
+          "editedTopic": "Harness 修改后",
+          "moved": true,
+          "selected": "47bb45c5-beeb-4998-af40-dd93be6df261",
+          "takes": [
+            {
+              "draftId": "47bb45c5-beeb-4998-af40-dd93be6df261",
+              "size": 1913
+            }
+          ],
+          "playing": true,
+          "errors": [],
+          "diagnostics": {
+            "events": [
+              {
+                "type": "navigation",
+                "url": "http://127.0.0.1:49920/practice.html"
+              },
+              {
+                "type": "navigation",
+                "url": "http://127.0.0.1:49920/practice.html"
+              },
+              {
+                "type": "navigation",
+                "url": "http://127.0.0.1:49920/practice.html"
+              },
+              {
+                "type": "navigation",
+                "url": "http://127.0.0.1:49920/recording.html?draft=47bb45c5-beeb-4998-af40-dd93be6df261"
+              },
+              {
+                "type": "navigation",
+                "url": "http://127.0.0.1:49920/recording.html?draft=47bb45c5-beeb-4998-af40-dd93be6df261"
+              }
+            ],
+            "cleanup": [
+              {
+                "context": 0,
+                "durationMs": 16,
+                "status": "PASS"
+              }
+            ],
+            "browserVersion": "157.0.8103.51"
+          }
+        },
+        "recording": {
+          "takes": [
+            {
+              "size": 17154,
+              "duration": 2.297800000190735,
+              "mime": "video/webm;codecs=vp9"
+            }
+          ],
+          "tracks": [
+            "ended"
+          ],
+          "notice": "录像已保存，可在下方回放和自评。",
+          "review": {
+            "rating": 3,
+            "notes": "保持停顿",
+            "coveragePct": 100
+          },
+          "playing": true,
+          "errors": [],
+          "filename": "模拟设备录制验收-20261115T054301004Z-4596d6df-3ef9-4cb2-b577-84b0666c290e.webm",
+          "remaining": 0,
+          "diagnostics": {
+            "events": [
+              {
+                "type": "navigation",
+                "url": "http://127.0.0.1:49920/practice.html"
+              },
+              {
+                "type": "navigation",
+                "url": "http://127.0.0.1:49920/recording.html?draft=record-test"
+              },
+              {
+                "type": "navigation",
+                "url": "http://127.0.0.1:49920/recording.html?draft=record-test"
+              }
+            ],
+            "cleanup": [
+              {
+                "context": 0,
+                "durationMs": 12,
+                "status": "PASS"
+              }
+            ],
+            "browserVersion": "157.0.8103.51"
+          }
+        },
+        "recording-failures": {
+          "denied": "测试拒绝",
+          "reenabled": true,
+          "recovery": true,
+          "stoppedTracks": true,
+          "filename": "失败恢复-20261115T054305953Z-782ec3e7-f497-43ac-8f7b-2c2221db008b.webm",
+          "saved": [
+            {
+              "size": 16583,
+              "mime": "audio/webm;codecs=opus"
+            }
+          ],
+          "hidden": true,
+          "canArm": true,
+          "errors": [],
+          "diagnostics": {
+            "events": [
+              {
+                "type": "navigation",
+                "url": "http://127.0.0.1:49920/practice.html"
+              },
+              {
+                "type": "navigation",
+                "url": "http://127.0.0.1:49920/recording.html?draft=fail-test"
+              }
+            ],
+            "cleanup": [
+              {
+                "context": 0,
+                "durationMs": 18,
+                "status": "PASS"
+              }
+            ],
+            "browserVersion": "157.0.8103.51"
+          }
+        }
+      }
+    }
+  },
+  "gate_sentinel": [
+    {
+      "name": "omitted-test-direct",
+      "exit": 1,
+      "command": [
+        "node",
+        "--test",
+        "--test-reporter=tap",
+        "scripts/controller-gate-sentinel.test.mjs"
+      ]
+    },
+    {
+      "name": "controller-gate-with-failing-script",
+      "exit": 0,
+      "command": [
+        "bash",
+        ".codingkeeper/gate.sh"
+      ]
+    }
+  ],
+  "proposed_gate_sentinel": {
+    "exit": 1,
+    "expected": 1,
+    "log_sha256": "d46b1894041bbd41ec039ddd0bdd89a95715977d44e8f84e33751e642d3cf723",
+    "summary": [
+      "[harness] offline FAIL {\"tests\":329,\"pass\":327,\"fail\":1,\"cancelled\":0,\"skipped\":1,\"todo\":0,\"duration_ms\":55095.631652}",
+      "[harness] FAIL — .harness/runs/2026-11-15T05-40-57-189Z-11654/report.md"
+    ]
+  },
+  "controller_parser_regression": {
+    "old": "4 assertion failures and no gate invocation",
+    "new": "2 tests pass; positive route runs gate then 2 reviews",
+    "real_worker_file": "worker-op8k7k14.log",
+    "real_worker_parser_exit": 0,
+    "logs_sha256": {
+      "evidence-parser-red.log": "fa9a81bd6508e70306823131a14e289323bb6cee90a3e06a3495584210f18380",
+      "evidence-parser-green.log": "c07eb725e9182c885ebb62387cb65fc1083609dc60142e8ce20ce64ef5a56bd7"
+    }
+  },
+  "limitations": [
+    "No real model calls",
+    "Synthetic media, no hardware certification",
+    "No Safari/file cross-browser verification",
+    "No user conversion or revenue measurement",
+    "Other projects inventoried, not behavior-audited"
+  ],
+  "proposed_gate_clean": {
+    "exit": 0,
+    "log_sha256": "f64dacbb955a820e97b105e24fe43a6e48cac1f6b15351cf48d31b83b28b1c90",
+    "summary": [
+      "[harness] offline PASS {\"tests\":328,\"pass\":327,\"fail\":0,\"cancelled\":0,\"skipped\":1,\"todo\":0,\"duration_ms\":53821.869698}",
+      "[harness] PASS — .harness/runs/2026-11-15T05-43-40-773Z-19413/report.md"
+    ]
+  },
+  "fleet_metadata_check": [
+    {
+      "project": "test",
+      "journal_receipts": 0,
+      "accepted_evidence": 0,
+      "manifests_checked": 0,
+      "missing_metadata": 0,
+      "mismatched_fingerprints": 0,
+      "errors": []
+    },
+    {
+      "project": "soul2soul",
+      "journal_receipts": 26,
+      "accepted_evidence": 26,
+      "manifests_checked": 26,
+      "missing_metadata": 0,
+      "mismatched_fingerprints": 0,
+      "errors": []
+    },
+    {
+      "project": "likeclaw",
+      "journal_receipts": 16,
+      "accepted_evidence": 16,
+      "manifests_checked": 16,
+      "missing_metadata": 0,
+      "mismatched_fingerprints": 0,
+      "errors": []
+    },
+    {
+      "project": "sale",
+      "journal_receipts": 28,
+      "accepted_evidence": 28,
+      "manifests_checked": 28,
+      "missing_metadata": 0,
+      "mismatched_fingerprints": 0,
+      "errors": []
+    },
+    {
+      "project": "fingerprint",
+      "journal_receipts": 20,
+      "accepted_evidence": 20,
+      "manifests_checked": 20,
+      "missing_metadata": 0,
+      "mismatched_fingerprints": 0,
+      "errors": []
+    },
+    {
+      "project": "wechatflow",
+      "journal_receipts": 24,
+      "accepted_evidence": 24,
+      "manifests_checked": 24,
+      "missing_metadata": 0,
+      "mismatched_fingerprints": 0,
+      "errors": []
+    },
+    {
+      "project": "codingKeeper",
+      "journal_receipts": 15,
+      "accepted_evidence": 15,
+      "manifests_checked": 15,
+      "missing_metadata": 0,
+      "mismatched_fingerprints": 0,
+      "errors": []
+    },
+    {
+      "project": "aifinance",
+      "journal_receipts": 10,
+      "accepted_evidence": 10,
+      "manifests_checked": 10,
+      "missing_metadata": 0,
+      "mismatched_fingerprints": 0,
+      "errors": []
+    },
+    {
+      "project": "producthunter",
+      "journal_receipts": 3,
+      "accepted_evidence": 3,
+      "manifests_checked": 3,
+      "missing_metadata": 0,
+      "mismatched_fingerprints": 0,
+      "errors": []
+    },
+    {
+      "project": "aimarket",
+      "journal_receipts": 12,
+      "accepted_evidence": 12,
+      "manifests_checked": 12,
+      "missing_metadata": 0,
+      "mismatched_fingerprints": 0,
+      "errors": []
+    },
+    {
+      "project": "airesearch",
+      "journal_receipts": 16,
+      "accepted_evidence": 16,
+      "manifests_checked": 16,
+      "missing_metadata": 0,
+      "mismatched_fingerprints": 0,
+      "errors": []
+    },
+    {
+      "project": "AIContent",
+      "journal_receipts": 14,
+      "accepted_evidence": 14,
+      "manifests_checked": 14,
+      "missing_metadata": 0,
+      "mismatched_fingerprints": 0,
+      "errors": []
+    },
+    {
+      "project": "agentos",
+      "journal_receipts": 1,
+      "accepted_evidence": 1,
+      "manifests_checked": 1,
+      "missing_metadata": 0,
+      "mismatched_fingerprints": 0,
+      "errors": []
+    },
+    {
+      "project": "AIGEO",
+      "journal_receipts": 15,
+      "accepted_evidence": 15,
+      "manifests_checked": 15,
+      "missing_metadata": 0,
+      "mismatched_fingerprints": 0,
+      "errors": []
+    },
+    {
+      "project": "chatgpt2api",
+      "journal_receipts": 4,
+      "accepted_evidence": 4,
+      "manifests_checked": 4,
+      "missing_metadata": 0,
+      "mismatched_fingerprints": 0,
+      "errors": []
+    },
+    {
+      "project": "DeepAICode2API",
+      "journal_receipts": 23,
+      "accepted_evidence": 23,
+      "manifests_checked": 23,
+      "missing_metadata": 0,
+      "mismatched_fingerprints": 0,
+      "errors": []
+    },
+    {
+      "project": "longimg-preview",
+      "journal_receipts": 26,
+      "accepted_evidence": 26,
+      "manifests_checked": 26,
+      "missing_metadata": 0,
+      "mismatched_fingerprints": 0,
+      "errors": []
+    },
+    {
+      "project": "dsh-superagent-prototype",
+      "journal_receipts": 37,
+      "accepted_evidence": 37,
+      "manifests_checked": 37,
+      "missing_metadata": 0,
+      "mismatched_fingerprints": 0,
+      "errors": []
+    },
+    {
+      "project": "all-api-hub",
+      "journal_receipts": 0,
+      "accepted_evidence": 0,
+      "manifests_checked": 0,
+      "missing_metadata": 0,
+      "mismatched_fingerprints": 0,
+      "errors": []
+    },
+    {
+      "project": "aitv",
+      "journal_receipts": 0,
+      "accepted_evidence": 0,
+      "manifests_checked": 0,
+      "missing_metadata": 0,
+      "mismatched_fingerprints": 0,
+      "errors": []
+    }
+  ],
+  "discarded_shutdown_private_tmp_recheck": {
+    "command": [
+      "node",
+      "--test",
+      "--test-reporter=tap",
+      "scripts/server-signal-shutdown.test.mjs"
+    ],
+    "regression_source_commit": "a13f63a",
+    "source": "current isolated copy",
+    "RUN_REAL_AI": "0",
+    "exit": 1,
+    "counts": {
+      "tests": 5,
+      "pass": 3,
+      "fail": 2,
+      "skipped": 0
+    },
+    "log_sha256": "79fd84e38f8b530400f16750266fada50d31a49d12dbb102553fa43bdc4651c8"
+  },
+  "test_quality_limits": [
+    {
+      "file": "scripts/generate-client-abort.test.mjs",
+      "finding": "alive probes the test runner process.pid and is not asserted; service recovery is not established by this regression"
+    },
+    {
+      "file": "a13f63a:scripts/server-signal-shutdown.test.mjs",
+      "finding": "8-second termination wait exceeds fake CLI natural 5-second lifetime; eventual exit alone does not establish SIGKILL escalation"
+    }
+  ],
+  "keeper_full_suite": {
+    "command": [
+      "tests/run-all"
+    ],
+    "exit": 0,
+    "verdict": "ALL STAGES PASS",
+    "stages": [
+      "syntax",
+      "watchdog 自测",
+      "unit (loop)",
+      "unit (headless)",
+      "audit night-loop",
+      "audit startup",
+      "audit acceptance",
+      "audit loop-daily",
+      "audit edges",
+      "audit desktop",
+      "audit tool-watchers",
+      "audit harness",
+      "audit isolate-cleanup",
+      "audit relocation",
+      "audit install-deps",
+      "audit init-parity",
+      "audit notify-parity",
+      "audit window",
+      "audit zcode-window",
+      "audit watch-window",
+      "audit zcode-quota",
+      "audit zcode-session",
+      "audit session-hygiene",
+      "audit park-revive",
+      "audit quality-trend",
+      "audit dsh-session",
+      "audit leaf-runtime",
+      "audit review-leaf",
+      "audit leaves",
+      "audit burn-runtime",
+      "audit watchdog-deploy",
+      "audit watchdog-install",
+      "audit evidence-retention",
+      "audit log-location",
+      "audit product-fuel",
+      "audit fuel-extension",
+      "audit interaction",
+      "audit swift-gate",
+      "audit prompts",
+      "audit status",
+      "integration codex",
+      "integration claude",
+      "integration pi",
+      "integration opencode",
+      "integration headless",
+      "faultinjection",
+      "conformance",
+      "keys (报告性)"
+    ],
+    "log_sha256": "1bf1d959da5f52db87c0c644c1ab2036aa4f9ea1fc89f22c9ccfab8f534cbaa1",
+    "limitations": "keys stage reports offline; real model calls skipped"
+  }
+}

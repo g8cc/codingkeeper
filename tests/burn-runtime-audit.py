@@ -61,6 +61,56 @@ class BurnRuntimeAudit(unittest.TestCase):
         result = subprocess.run(['ps', '-p', str(pid), '-o', 'stat='], capture_output=True, text=True)
         self.assertTrue(not result.stdout.strip() or result.stdout.strip().startswith('Z'), result.stdout)
 
+    def test_evidence_marker_accepts_markdown_and_rejects_empty_templates(self):
+        cases = [
+            ('证据: node --test regression.test.mjs → 2 PASS', True),
+            ('证据： 重现关页后 CLI 继续执行；回归通过', True),
+            ('**证据**： `node --test` → 2/2 PASS', True),
+            ('- **证据：** `node --test` → 2/2 PASS', True),
+            ('`证据` : baseline FAIL; candidate PASS', True),
+            ('证据:', False),
+            ('**证据**： **', False),
+            ('证据: <依据>', False),
+            ('**证据**： <依据> — 请填入测试结果', False),
+            ('没有证据: 随便改了格式', False),
+            ('TASK_RESULT: DONE', False),
+        ]
+        for output, expected in cases:
+            with self.subTest(output=output):
+                (self.state / 'worker.log').write_text(output + '\n')
+                actual = self.shell('if turn_has_evidence .codingkeeper/worker.log; then printf yes; else printf no; fi\n')
+                self.assertEqual(actual, 'yes' if expected else 'no')
+
+    def test_markdown_evidence_still_requires_gate_and_two_reviews(self):
+        (self.state / 'queue.md').write_text('## ready\n')
+        (self.world / '.gitignore').write_text('.codingkeeper/\nhome/\n')
+        (self.world / 'product.txt').write_text('before\n')
+        for command in (['git', 'init', '-q'], ['git', 'add', '.'],
+                        ['git', '-c', 'user.name=Audit', '-c', 'user.email=a@example.invalid', 'commit', '-qm', 'base']):
+            subprocess.run(command, cwd=self.world, env=self.env, check=True, capture_output=True)
+        out = self.shell(r'''
+IDLE_PROMPT=improve
+CODEXC_PROMPT_ROTATION=0
+register_project() { :; }
+notify() { :; }
+headless_turn() {
+    if [ -f .codingkeeper/journal ]; then
+        touch .codingkeeper/loop.halt
+    else
+        printf 'after\n' > product.txt
+    fi
+    printf '**证据**： regression: baseline FAIL, candidate PASS\nTASK_RESULT: DONE\n' > "$2"
+}
+gate_run() { printf 'gate\n' >> .codingkeeper/checks; : > "$1"; }
+review_run() { printf 'review\n' >> .codingkeeper/checks; : > "$2"; printf 0; }
+run_runner
+printf finished
+''')
+        self.assertEqual(out, 'finished')
+        self.assertEqual((self.state / 'checks').read_text().splitlines(), ['gate', 'review', 'review'])
+        self.assertEqual(len(list((self.state / 'evidence').glob('*/accepted.json'))), 1)
+        self.assertIn('accepted after 2 review round(s)', (self.state / 'journal').read_text())
+
     def test_successful_worker_reaps_detached_descendants_before_gate(self):
         out = self.shell(r'''
 CODEXC_HEADLESS_CMD='sleep 45 >/dev/null 2>&1 & echo $! > .codingkeeper/orphan.pid; printf "TASK_RESULT: DONE\n"'

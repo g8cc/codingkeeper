@@ -164,7 +164,22 @@ headless_wait_status() {  # text phase next-run epoch [active]
 
 turn_has_evidence() {  # $1=回合输出文件 — idle 纪律: 改动必须带 '证据:' 行 (中英冒号都收)
     [ -f "$1" ] || return 1
-    grep -aE '证据[:：]' "$1" | grep -qvE '证据[:：][[:space:]]*<依据>'
+    # Workers commonly emphasize the label as **证据**：. Formatting is not
+    # missing evidence; empty labels and echoed prompt templates still fail.
+    python3 - "$1" <<'PYEVIDENCE'
+import re
+import sys
+
+label = re.compile(r'^\s*(?:[-+*]\s+|#{1,6}\s+)?[*_`]*证据[*_`]*\s*[:：](.*)$')
+with open(sys.argv[1], encoding='utf-8', errors='replace') as source:
+    for line in source:
+        match = label.match(line)
+        if match:
+            evidence = match[1].strip().strip('*_`').strip()
+            if evidence and not evidence.startswith('<依据>'):
+                sys.exit(0)
+sys.exit(1)
+PYEVIDENCE
 }
 
 headless_wait_ready() {
