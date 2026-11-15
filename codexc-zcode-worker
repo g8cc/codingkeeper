@@ -57,8 +57,8 @@ wait "$capture_pid"; rc=$?
 # from its file: a large final response can exceed the OS argv size limit.
 raw="$(python3 "$WORKER_DIR/ck-log.py" --tail "$turn_out" 4096 2>/dev/null)"
 err="$(python3 "$WORKER_DIR/ck-log.py" --tail "$turn_err" 4096 2>/dev/null)"
-# 错误分类: runner 据此决策 — auth 立即停等人 / quota park 等窗口重置 /
-# transient 退避重试 / unknown 走既有 3 发路径。分类依据 = zcode CLI 的
+# 错误分类: runner 据此决策 — auth 立即停等人 / quota 仅按明确恢复时间等待 /
+# transient 有界退避重试 / unknown 走既有 3 发路径。分类依据 = zcode CLI 的
 # 结构化错误输出 (stdout/stderr 原文), 判定顺序: auth → quota → transient。
 classify_error() {  # $1=raw stdout $2=raw stderr -> auth|quota|transient|unknown
     local both="$1 $2" provider_class
@@ -67,19 +67,23 @@ classify_error() {  # $1=raw stdout $2=raw stderr -> auth|quota|transient|unknow
     # codes; accept only an explicit code/error_code field from a failed CLI.
     provider_class="$(python3 - "$both" <<'PYCLASS'
 import re, sys
-codes = set(re.findall(r'''(?<![\w])['"]?(?:error_?code|code)['"]?\s*[:=]\s*['"]?(1005|1006)(?![0-9])''',
+codes = set(re.findall(r'''(?<![\w])['"]?(?:error_?code|code)['"]?\s*[:=]\s*['"]?(1005|1006|3008)(?![0-9])''',
                        sys.argv[1], flags=re.I))
 if '1006' in codes:
     print('auth')
 elif '1005' in codes:
     print('quota')
+elif '3008' in codes:
+    print('transient')
 PYCLASS
 )"
     if [ -n "$provider_class" ]; then printf '%s' "$provider_class"; return; fi
     case "$both" in
         *401*|*403*|*[Uu]nauthorized*|*令牌已过期*|*令牌过期*|*INVALID_API_KEY*|*API\ key*)
             printf 'auth'; return ;;
-        *429*|*rate?limit*|*usage?limit*|*quota*|*配额*|*额度*|*套餐有效期*|*未到生效时间*|*套餐尚未生效*|*套餐未生效*)
+        *429*|*rate?limit*|*concurren*|*并发*|*too?many?requests*)
+            printf 'transient'; return ;;
+        *usage?limit*|*quota*|*配额*|*额度*|*套餐有效期*|*未到生效时间*|*套餐尚未生效*|*套餐未生效*)
             printf 'quota'; return ;;
         *gateway.ai.error*|*ECONNRESET*|*fetch?failed*|*socket*|*timed?out*|*timeout*|*Bad?Gateway*|*Service?Unavailable*|*overloaded*|*at?capacity*|*network*|*connection*)
             printf 'transient'; return ;;

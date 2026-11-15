@@ -45,7 +45,18 @@ run_runner
 ''')
   self.assertEqual(rc,0,err);self.assertNotIn('calls',files)
   s=json.loads(files['waiting.json']);self.assertFalse(s['active']);self.assertEqual(s['phase'],'waiting_window');self.assertGreater(s['next_run_at'],time.time())
- def test_quota_waits_until_next_window_without_retry(self):
+ def test_quota_waits_until_explicit_reset_without_retry(self):
+  rc,out,err,files=self.run_case('''
+ck_window_check(){ CK_WINDOW_REASON=allowed; CK_WINDOW_ALLOWED=1; CK_WINDOW_DEADLINE=$(( $(date +%s) + 60 )); CK_WINDOW_NEXT_OPEN=$(( $(date +%s) + 600 )); return 0; }
+headless_turn(){ echo call >> calls; printf 'CK_QUOTA_UNTIL: %s\\nCK_ERROR_CLASS: quota\\n' "$(( $(date +%s) + 600 ))" > "$2"; return 1; }
+sleep(){ cp .codingkeeper/status.json waiting.json; touch .codingkeeper/loop.halt; }
+run_runner
+''')
+  self.assertEqual(rc,0,err);self.assertEqual(files['calls'].count('call'),1)
+  s=json.loads(files['waiting.json']);self.assertEqual(s['phase'],'waiting_quota');self.assertFalse(s['active']);self.assertIn('.codingkeeper/quota-until',files)
+  self.assertEqual(int(files['.codingkeeper/quota-until'].split()[1]),s['next_run_at'])
+
+ def test_quota_without_explicit_reset_does_not_guess_from_next_window(self):
   rc,out,err,files=self.run_case('''
 ck_window_check(){ CK_WINDOW_REASON=allowed; CK_WINDOW_ALLOWED=1; CK_WINDOW_DEADLINE=$(( $(date +%s) + 60 )); CK_WINDOW_NEXT_OPEN=$(( $(date +%s) + 600 )); return 0; }
 headless_turn(){ echo call >> calls; printf 'CK_ERROR_CLASS: quota\\n' > "$2"; return 1; }
@@ -53,7 +64,38 @@ sleep(){ cp .codingkeeper/status.json waiting.json; touch .codingkeeper/loop.hal
 run_runner
 ''')
   self.assertEqual(rc,0,err);self.assertEqual(files['calls'].count('call'),1)
-  s=json.loads(files['waiting.json']);self.assertEqual(s['phase'],'waiting_quota');self.assertFalse(s['active']);self.assertIn('.codingkeeper/quota-until',files)
+  self.assertIn('.codingkeeper/loop.halt',files);self.assertNotIn('.codingkeeper/quota-until',files)
+  self.assertIn('- [ ] task',files['.codingkeeper/queue.md']);self.assertNotIn('.codingkeeper/journal',files)
+
+ def test_transient_limit_parks_without_replaying_or_dropping_task(self):
+  rc,out,err,files=self.run_case('''
+CODEXC_AUTO_RESUME=0
+headless_turn(){ echo call >> calls; printf 'CK_ERROR_CLASS: transient\\n' > "$2"; return 1; }
+run_runner
+''')
+  self.assertEqual(rc,0,err);self.assertEqual(files['calls'].count('call'),1)
+  self.assertIn('.codingkeeper/loop.halt',files);self.assertNotIn('.codingkeeper/quota-until',files)
+  self.assertIn('- [ ] task',files['.codingkeeper/queue.md']);self.assertNotIn('.codingkeeper/journal',files)
+
+ def test_interaction_status_takes_precedence_over_quota_wait(self):
+  rc,out,err,files=self.run_case('''
+echo $(( $(date +%s) + 600 )) > .codingkeeper/quota-until
+ck_interaction_check(){ return 1; }
+sleep(){ cp .codingkeeper/status.json waiting.json; touch .codingkeeper/loop.halt; }
+run_runner
+''')
+  self.assertEqual(rc,0,err);self.assertNotIn('calls',files)
+  s=json.loads(files['waiting.json']);self.assertEqual(s['phase'],'waiting_interaction')
+
+ def test_interaction_status_hides_even_a_corrupt_quota_marker(self):
+  rc,out,err,files=self.run_case('''
+printf 'corrupt\\n' > .codingkeeper/quota-until
+ck_interaction_check(){ return 1; }
+sleep(){ cp .codingkeeper/status.json waiting.json; touch .codingkeeper/loop.halt; }
+run_runner
+''')
+  self.assertEqual(rc,0,err);self.assertNotIn('calls',files)
+  self.assertEqual(json.loads(files['waiting.json'])['phase'],'waiting_interaction')
  def test_quota_failure_retains_first_of_two_ready_tasks(self):
   rc,out,err,files=self.run_case(r'''
 +printf '## ready\n- [ ] first task\n- [ ] second task\n' > .codingkeeper/queue.md
@@ -85,13 +127,20 @@ run_runner
   self.assertNotIn('calls',files);self.assertTrue('.codingkeeper/loop.halt' in files)
  def test_persisted_quota_blocks_restart(self):
   rc,out,err,files=self.run_case('''
-now=$(date +%s); echo $((now + 600)) > .codingkeeper/quota-until
+now=$(date +%s); printf 'v1 %s\\n' "$((now + 600))" > .codingkeeper/quota-until
 sleep(){ cp .codingkeeper/status.json waiting.json; touch .codingkeeper/loop.halt; }
 run_runner
 ''')
   self.assertNotIn('calls',files);self.assertEqual(json.loads(files['waiting.json'])['phase'],'waiting_quota')
+ def test_legacy_guessed_quota_marker_is_cleared(self):
+  rc,out,err,files=self.run_case('''
+now=$(date +%s); echo $((now + 600)) > .codingkeeper/quota-until
+headless_turn(){ echo call >> calls; touch .codingkeeper/loop.halt; return 125; }
+run_runner
+''')
+  self.assertIn('calls',files);self.assertNotIn('.codingkeeper/quota-until',files)
  def test_quota_marker_cannot_be_fifo_or_symlink(self):
-  for setup in ("mkfifo .codingkeeper/quota-until", "echo 9999999999 > elsewhere; ln -s ../elsewhere .codingkeeper/quota-until"):
+  for setup in ("mkfifo .codingkeeper/quota-until", "echo 'v1 9999999999' > elsewhere; ln -s ../elsewhere .codingkeeper/quota-until"):
    with self.subTest(setup=setup):
     rc,out,err,files=self.run_case(setup+'; run_runner')
     self.assertNotIn('calls',files);self.assertIn('.codingkeeper/loop.halt',files)
@@ -116,7 +165,7 @@ ck_window_check(){ CK_WINDOW_REASON=allowed; CK_WINDOW_ALLOWED=1; CK_WINDOW_DEAD
 headless_turn(){
  n=$(cat count 2>/dev/null || echo 0); echo $((n+1)) > count
  if [ "$n" = 0 ]; then printf 'TASK_RESULT: DONE\\n' > "$2"; return 0
- else printf 'CK_ERROR_CLASS: quota\\n' > "$2"; return 1; fi
+ else printf 'CK_QUOTA_UNTIL: %s\\nCK_ERROR_CLASS: quota\\n' "$(( $(date +%s) + 600 ))" > "$2"; return 1; fi
 }
 sleep(){ cp .codingkeeper/status.json waiting.json; touch .codingkeeper/loop.halt; }
 '''
@@ -132,9 +181,9 @@ sleep(){ cp .codingkeeper/status.json waiting.json; touch .codingkeeper/loop.hal
   self.assertIn('- [ ] task',files['.codingkeeper/queue.md'])
   status=json.loads(files['waiting.json'])
   self.assertEqual(status['phase'],'waiting_quota');self.assertFalse(status['active'])
- def test_quota_in_gate_repair_defers_to_next_window(self):
+ def test_quota_in_gate_repair_defers_to_explicit_reset(self):
   self.quota_during_repair()
- def test_quota_in_review_repair_defers_to_next_window(self):
+ def test_quota_in_review_repair_defers_to_explicit_reset(self):
   for parallel in (True,False):
    with self.subTest(parallel=parallel):self.quota_during_repair(review=True,parallel=parallel)
  def test_cli_status_live_waiting_runner_is_never_burning(self):

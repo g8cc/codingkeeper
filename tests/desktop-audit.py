@@ -24,7 +24,7 @@ case "waiting_window", "waiting_quota", "backoff", "waiting_fuel", "waiting_inte
     check(status.waiting, "waiting phases must be recognized by the panel")
     check(!status.running, "waiting phases must never count as running, even with a fresh active heartbeat")
     let message = delegate.waitingDescription(status)
-    let expected = ["waiting_window": "等待", "waiting_quota": "配额耗尽", "backoff": "重试等待", "waiting_fuel": "等待新任务", "waiting_interaction": "用户正在交互"][CommandLine.arguments[1]]!
+    let expected = ["waiting_window": "等待", "waiting_quota": "等待上游额度", "backoff": "重试等待", "waiting_fuel": "等待新任务", "waiting_interaction": "用户正在交互"][CommandLine.arguments[1]]!
     check(message.hasPrefix(expected), "waiting state must show its Chinese reason")
     if !["waiting_fuel", "waiting_interaction"].contains(CommandLine.arguments[1]) {
         check(message.contains(":"), "a valid next_run_at must show its local clock time")

@@ -2,6 +2,7 @@
 """ZCode wire IDs and a durable retry session, separate from useful context."""
 import json
 import os
+import datetime as dt
 from pathlib import Path
 import re
 import stat
@@ -9,6 +10,10 @@ import subprocess
 import sys
 import tempfile
 import time
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:  # pragma: no cover - Python 3.8 fallback
+    ZoneInfo = None
 
 LIMIT = 16 * 1024 * 1024
 ID = re.compile(r'sess_[A-Za-z0-9_-]{1,200}')
@@ -16,6 +21,29 @@ NOTICE = (r'额度已领到（[0-9]+(?:,[0-9]{3})* token），'
           r'[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2} 起生效，'
           r'还有约 [0-9]+ 分钟。\s*'
           r'这是套餐的生效规则，不是报错；到点直接用即可，不用重试。')
+NOTICE_TIME = re.compile(r'额度已领到（[0-9]+(?:,[0-9]{3})* token），'
+                         r'(?P<month>[0-9]{2})-(?P<day>[0-9]{2}) '
+                         r'(?P<hour>[0-9]{2}):(?P<minute>[0-9]{2}) 起生效，')
+
+
+def notice_reset_epoch(text):
+    match = NOTICE_TIME.match(text.strip())
+    if not match:
+        return None
+    try:
+        if ZoneInfo is None:
+            return None
+        zone = ZoneInfo(os.environ.get('CODEXC_ACTIVE_TZ', 'Asia/Shanghai'))
+        now = dt.datetime.now(zone)
+        candidate = dt.datetime(now.year,
+                                int(match.group('month')), int(match.group('day')),
+                                int(match.group('hour')), int(match.group('minute')),
+                                tzinfo=zone)
+        if candidate <= now or candidate - now > dt.timedelta(days=7):
+            return None
+        return int(candidate.timestamp())
+    except (ValueError, TypeError, OverflowError):
+        return None
 
 
 def valid(sid):
@@ -200,7 +228,10 @@ def finish(path, out, resumed):
     if not isinstance(response, str) or not response.strip():
         raise ValueError('missing final response')
     if re.fullmatch(NOTICE, response.strip()):
+        reset = notice_reset_epoch(response)
         print('zcode turn deferred: package quota is not active yet')
+        if reset:
+            print(f'CK_QUOTA_UNTIL: {reset}')
         print('CK_ERROR_CLASS: quota')
         return 75
     for record in output:

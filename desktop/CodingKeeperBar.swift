@@ -359,7 +359,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         switch status.phase {
         case "waiting_window": return next.isEmpty ? "等待运行时段" : "等待\(next)"
-        case "waiting_quota": return next.isEmpty ? "配额耗尽，等待额度恢复" : "配额耗尽 · 下次检查 \(next)"
+        case "waiting_quota": return next.isEmpty ? "等待上游额度状态" : "等待上游额度 · 下次检查 \(next)"
         case "backoff": return next.isEmpty ? "重试等待" : "重试等待 · \(next) 后重试"
         case "waiting_fuel": return "等待新任务或工程 Prompt"
         case "waiting_interaction": return "用户正在交互，自动任务让位"

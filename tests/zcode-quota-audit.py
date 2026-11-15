@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Offline quota classification regressions against a fake ZCode process."""
 import json
+import datetime as dt
 import os
 from pathlib import Path
 import subprocess
@@ -93,6 +94,23 @@ class ZcodeQuotaAudit(unittest.TestCase):
 
     def test_failed_package_validity_message_is_quota(self):
         self.assert_error(self.run_worker("", "不在套餐有效期内", 1), "quota")
+
+    def test_rate_and_concurrency_limits_are_transient(self):
+        for stderr in ("HTTP 429 rate limit", "user concurrency limit exceeded"):
+            with self.subTest(stderr=stderr):
+                self.assert_error(self.run_worker("", stderr, 1), "transient")
+
+    def test_provider_concurrency_code_is_transient(self):
+        self.assert_error(self.run_worker("", json.dumps({"code": 3008, "msg": "user concurrency limit exceeded"}), 1), "transient")
+
+    def test_package_notice_exposes_explicit_reset_timestamp(self):
+        future = (dt.datetime.now() + dt.timedelta(days=1)).strftime("%m-%d %H:%M")
+        notice = NOTICE.replace("11-05 23:00", future)
+        result = self.run_worker(self.response(notice, "sess_new"))
+        self.assert_error(result, "quota")
+        marker = [line for line in result.stdout.splitlines() if line.startswith("CK_QUOTA_UNTIL: ")]
+        self.assertEqual(len(marker), 1)
+        self.assertGreater(int(marker[0].split(":", 1)[1].strip()), 0)
 
     def test_unrelated_number_in_failure_is_not_a_provider_code(self):
         self.assert_error(self.run_worker("", "build failed at example1006:120", 1), "unknown")

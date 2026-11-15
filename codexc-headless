@@ -168,33 +168,59 @@ turn_has_evidence() {  # $1=回合输出文件 — idle 纪律: 改动必须带 
 }
 
 headless_wait_ready() {
-    local now quota phase next text last=""
+    local now quota quota_state phase next text last=""
     while [ ! -e .codingkeeper/loop.halt ]; do
         now="$(date +%s)"; quota=0; phase=""; next=0
-        if [ -e .codingkeeper/quota-until ] || [ -L .codingkeeper/quota-until ]; then
-            quota="$(python3 - <<'PYREADQUOTA'
-import os, re, stat
+        # Manual interaction is the highest-priority reason. A stale quota
+        # marker must never hide that the user currently owns the turn.
+        if ! ck_interaction_check; then
+            phase=waiting_interaction; next=0; text="用户正在交互，自动任务让位"
+        fi
+        if [ -z "$phase" ] && { [ -e .codingkeeper/quota-until ] || [ -L .codingkeeper/quota-until ]; }; then
+            quota_state="$(python3 - <<'PYREADQUOTA'
+import os, re, stat, time
 try:
     fd = os.open('.codingkeeper/quota-until', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode): raise ValueError('not a regular file')
-        raw = os.read(fd, 33)
+        raw = os.read(fd, 64)
     finally:
         os.close(fd)
-    if not re.fullmatch(rb'[0-9]{1,10}\n?', raw): raise ValueError('invalid reset timestamp')
-    print(int(raw))
+    if re.fullmatch(rb'v1 [0-9]{1,10}\n?', raw):
+        value = int(raw.split()[1])
+        if value > int(time.time()) + 7 * 86400:
+            raise ValueError('quota reset timestamp exceeds seven days')
+        print('v1:' + str(value))
+    elif re.fullmatch(rb'[0-9]{1,10}\n?', raw):
+        # v0 was written by the buggy window-derived implementation. It has
+        # no trustworthy provenance, so discard it rather than waiting until
+        # an unrelated calendar boundary.
+        print('legacy')
+    else:
+        raise ValueError('invalid reset timestamp')
 except (OSError, ValueError):
     raise SystemExit(1)
 PYREADQUOTA
 )" || return 2
-            if [ "$quota" -gt "$now" ]; then
-                phase=waiting_quota; next="$quota"; text="配额耗尽，等待下个套餐时段"
-            else
-                rm -f .codingkeeper/quota-until || return 2
-            fi
-        fi
-        if [ -z "$phase" ] && ! ck_interaction_check; then
-            phase=waiting_interaction; next=0; text="用户正在交互，自动任务让位"
+            case "$quota_state" in
+                v1:*)
+                    quota="${quota_state#v1:}"
+                    if [ "$quota" -gt "$now" ]; then
+                        if [ -z "$phase" ]; then
+                            phase=waiting_quota; next="$quota"; text="配额耗尽 · 等待上游恢复"
+                        fi
+                    else
+                        rm -f .codingkeeper/quota-until || return 2
+                    fi
+                    ;;
+                legacy)
+                    rm -f .codingkeeper/quota-until || return 2
+                    log "discarded legacy window-derived quota marker"
+                    ;;
+                *)
+                    return 2
+                    ;;
+            esac
         fi
         if [ -z "$phase" ]; then
             if ck_window_check; then return 0; fi
@@ -212,18 +238,20 @@ PYREADQUOTA
     return 1
 }
 
-headless_defer_quota() {
-    [ "$CODEXC_AUTO_RESUME" -gt 0 ] || return 1
-    ck_window_check || true
-    local next="${CK_WINDOW_NEXT_OPEN:-0}" now
-    now="$(date +%s)"
-    [ "$next" -gt "$now" ] || return 1
+headless_record_quota_until() {
+    local next="$1"
     python3 - "$next" <<'PYQUOTA'
-import os, sys, tempfile
+import os, sys, tempfile, time
+try:
+    value = int(sys.argv[1])
+except (ValueError, TypeError):
+    raise SystemExit(1)
+if value <= int(time.time()) or value > int(time.time()) + 7 * 86400:
+    raise SystemExit(1)
 fd, path = tempfile.mkstemp(prefix=".quota-", dir=".codingkeeper")
 try:
     with os.fdopen(fd, "w") as f:
-        f.write(sys.argv[1] + "\n")
+        f.write("v1 %d\n" % value)
         f.flush(); os.fsync(f.fileno())
     os.replace(path, ".codingkeeper/quota-until")
 finally:
@@ -232,12 +260,29 @@ PYQUOTA
 }
 
 headless_quota_pause() {
-    if headless_defer_quota; then
-        log "quota exhausted: no retry before next availability window"
-        CK_TURN_TS=0
-    else
-        park "配额耗尽 — 已停止自动重试，等待人工恢复" "model quota exhausted"
+    local outfile="${1:-}" next now
+    if [ "$CODEXC_AUTO_RESUME" -gt 0 ] && [ -f "$outfile" ]; then
+        next="$(python3 - "$outfile" <<'PYQUOTA_READ'
+import re, sys
+try:
+    with open(sys.argv[1], 'rb') as source:
+        lines = source.read(1024 * 1024).splitlines()
+except OSError:
+    raise SystemExit(1)
+matches = [re.fullmatch(rb'CK_QUOTA_UNTIL: ([0-9]{1,10})', line) for line in lines]
+matches = [match for match in matches if match]
+if len(matches) == 1:
+    print(int(matches[0].group(1)))
+PYQUOTA_READ
+        )" || next=0
+        now="$(date +%s)"
+        if [ "${next:-0}" -gt "$now" ] 2>/dev/null && headless_record_quota_until "$next"; then
+            log "quota exhausted: provider supplied reset timestamp $next"
+            CK_TURN_TS=0
+            return 0
+        fi
     fi
+    park "上游返回配额错误 — 未给可信恢复时间，任务保留等待人工恢复" "provider quota error without reset time"
 }
 
 halt_signature() {
@@ -264,7 +309,7 @@ park() {  # $1=通知文本 $2=日志原因 — 落停靠文件; mode 是 run_ru
     # 瞬时类 park 标记 (供 run_runner 尾部决定是否自动复燃): 网关抖动/回合与审查超时
     # 属基础设施故障, 有界自愈; BLOCKED/gate 耗尽/审查不可解析/队列失配 = 真问题, 留给人
     case "$2" in
-        *timeouts*|*"timed out"*|*"empty turns"*) park_transient=1 ;;
+        *timeouts*|*"timed out"*|*"empty turns"*|*transient*|*限流*|*暂时故障*) park_transient=1 ;;
         *) park_transient=0 ;;
     esac
     return 0
@@ -402,7 +447,11 @@ run_runner() {
                 continue
             fi
             if grep -q '^CK_ERROR_CLASS: quota' "$outfile" 2>/dev/null; then
-                headless_quota_pause
+                headless_quota_pause "$outfile"
+                continue
+            fi
+            if grep -q '^CK_ERROR_CLASS: transient' "$outfile" 2>/dev/null; then
+                park "请求遭遇限流或暂时故障，任务保留并等待复试" "transient worker failure"
                 continue
             fi
             fail_streak=$((fail_streak + 1))
@@ -471,7 +520,11 @@ run_runner() {
             headless_turn "$prompt" "$outfile"; rc=$?
             [ "$rc" != 125 ] || continue
             if [ "$rc" -ne 0 ] && grep -q '^CK_ERROR_CLASS: quota' "$outfile" 2>/dev/null; then
-                headless_quota_pause
+                headless_quota_pause "$outfile"
+                continue
+            fi
+            if [ "$rc" -ne 0 ] && grep -q '^CK_ERROR_CLASS: transient' "$outfile" 2>/dev/null; then
+                park "gate 修复请求遭遇限流或暂时故障，任务保留并等待复试" "transient worker failure"
                 continue
             fi
             marker="$(result_marker "$outfile")"
@@ -547,7 +600,11 @@ run_runner() {
                 headless_turn "$prompt" "$outfile"; rc=$?
                 [ "$rc" != 125 ] || break
                 if [ "$rc" -ne 0 ] && grep -q '^CK_ERROR_CLASS: quota' "$outfile" 2>/dev/null; then
-                    headless_quota_pause
+                    headless_quota_pause "$outfile"
+                    break
+                fi
+                if [ "$rc" -ne 0 ] && grep -q '^CK_ERROR_CLASS: transient' "$outfile" 2>/dev/null; then
+                    park "审查修复请求遭遇限流或暂时故障，任务保留并等待复试" "transient worker failure"
                     break
                 fi
                 marker="$(result_marker "$outfile")"
@@ -753,7 +810,8 @@ cmd_selftest_integration() {
           echo '  "IDLE-DONE") echo "无事可做 TASK_RESULT: DONE (idle)" ;;'
           echo '  WORK) printf "real fixture improvement\n" >> README.md; echo "证据: fixture README.md 追加 real fixture improvement"; echo "TASK_RESULT: DONE" ;;'
           echo '  AUTHFAIL) echo "zcode turn failed (rc=1, class=auth): 该令牌已过期"; echo "CK_ERROR_CLASS: auth"; exit 1 ;;'
-          echo '  QUOTAFAIL) echo "zcode turn failed (rc=1, class=quota): 429 rate limit"; echo "CK_ERROR_CLASS: quota"; exit 1 ;;'
+          echo '  QUOTAFAIL) echo "zcode turn failed (rc=1, class=quota): quota exhausted"; echo "CK_ERROR_CLASS: quota"; exit 1 ;;'
+          echo '  RATEFAIL) echo "zcode turn failed (rc=1, class=transient): 429 rate limit"; echo "CK_ERROR_CLASS: transient"; exit 1 ;;'
           echo '  *) echo "did work. TASK_RESULT: $resp" ;;'
           echo 'esac'
         } > "$script"

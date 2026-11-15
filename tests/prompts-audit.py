@@ -151,13 +151,13 @@ ck_window_check() {
 headless_turn() {
     printf '%s\n' "$BURN_PROMPT_ID" >> selected
     if [ "$(wc -l < selected)" -eq 1 ]; then
-        printf 'CK_ERROR_CLASS: quota\n' > "$2"
+        printf 'CK_QUOTA_UNTIL: %s\nCK_ERROR_CLASS: quota\n' "$(( $(date +%s) + 600 ))" > "$2"
         return 1
     fi
     touch .codingkeeper/loop.halt
     return 125
 }
-sleep() { printf '1\n' > .codingkeeper/quota-until; }
+sleep() { printf 'v1 1\n' > .codingkeeper/quota-until; }
 run_runner
 '''
         env = self.env | {'CODEXC_HEADLESS_CMD': 'true', 'CODEXC_LOOP_IDLE': '1',
