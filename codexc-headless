@@ -45,6 +45,9 @@
 #   CODEXC_LOOP_DRY        1 = log actions, never run the worker
 #   CODEXC_ACTIVE_WINDOW   HH:MM-HH:MM; default 23:00-09:00 on weekdays, weekends open
 #   CODEXC_ACTIVE_TZ       IANA timezone for the window (default Asia/Shanghai)
+#   CODEXC_PROVIDER_RECOVERY  wait for provider changes and resume exact session (default 1)
+#   CODEXC_PROVIDER_MAX_RESTARTS  new provider configurations per turn (default 2)
+#   CODEXC_PROVIDER_POLL   configuration recheck interval seconds (default 2)
 
 set -u
 
@@ -72,6 +75,9 @@ CODEXC_LOOP_DRY="$(normalize_uint CODEXC_LOOP_DRY "${CODEXC_LOOP_DRY:-0}" 0 0 1)
 CODEXC_REVIEW_PARALLEL="$(normalize_uint CODEXC_REVIEW_PARALLEL "${CODEXC_REVIEW_PARALLEL:-1}" 1 0 1)"
 # 瞬时故障 park 后的自动复燃次数 (0=禁用): 网关/审查道抖动不再需要人拉起
 CODEXC_AUTO_RESUME="$(normalize_uint CODEXC_AUTO_RESUME "${CODEXC_AUTO_RESUME:-4}" 4 0 10)"
+CODEXC_PROVIDER_RECOVERY="$(normalize_uint CODEXC_PROVIDER_RECOVERY "${CODEXC_PROVIDER_RECOVERY:-1}" 1 0 1)"
+CODEXC_PROVIDER_MAX_RESTARTS="$(normalize_uint CODEXC_PROVIDER_MAX_RESTARTS "${CODEXC_PROVIDER_MAX_RESTARTS:-2}" 2 0 10)"
+CODEXC_PROVIDER_POLL="$(normalize_uint CODEXC_PROVIDER_POLL "${CODEXC_PROVIDER_POLL:-2}" 2 1 60)"
 
 
 IDLE_PROMPT_DEFAULT='[codexc-headless] 持续改进: 审查当前代码的正确性/安全/性能/可靠/鲁棒/可维护/测试/依赖/可观测/文档, 发现问题修复并 commit, 无事可做以 TASK_RESULT: DONE (idle) 结尾'
@@ -85,19 +91,20 @@ esac
 # one headless turn: blocking subprocess with hard timeout; stdout carries the
 # worker's final message. Returns 0 and fills $2 (stdout file); rc 124 = timeout
 # (dry 模式在 run_runner 里就拦截返回, 不会走到这里)
-headless_turn() {  # $1=task text $2=outfile
+headless_turn_once() {  # $1=task text $2=outfile
     local outfile="$2" instrfile="$2.instr" rpid waited=0 rc tool=headless deadline
-    case "${CODEXC_HEADLESS_CMD:-}" in
-        *zcode-worker*) tool=zcode ;;
-        *dsh-worker*)   tool=dsh ;;
-    esac
+    local launch=(/bin/bash -c "$CODEXC_HEADLESS_CMD") provider_reloading="${3:-0}"
+    tool="$(headless_provider_tool)" || tool=headless
     : > "$outfile" || return 1
     ck_run_check || return 125
     require_gate_check || return 1
     deadline="${CK_WINDOW_DEADLINE:-0}"
     printf '%s' "$1" > "$instrfile" || return 1
     review_groups_prepare || return 1
-    command python3 "$CK_COMMON_DIR/ck-review-process.py" launch "$CK_REVIEW_GROUP_DIR" "$CK_REVIEW_GROUP_TOKEN" /bin/bash -c "$CODEXC_HEADLESS_CMD" < "$instrfile" > "$outfile" 2>&1 &
+    if [ "$tool" != headless ] && [ -f "$CK_COMMON_DIR/ck-provider.py" ]; then
+        launch=(env CODEXC_PROVIDER_RELOADING="$provider_reloading" python3 "$CK_COMMON_DIR/ck-provider.py" exec "$tool" -- /bin/bash -c "$CODEXC_HEADLESS_CMD")
+    fi
+    command python3 "$CK_COMMON_DIR/ck-review-process.py" launch "$CK_REVIEW_GROUP_DIR" "$CK_REVIEW_GROUP_TOKEN" "${launch[@]}" < "$instrfile" > "$outfile" 2>&1 &
     rpid=$!
     while kill -0 "$rpid" 2>/dev/null; do
         if [ -e .codingkeeper/loop.halt ] || ! ck_interaction_check || { [ "$deadline" -gt 0 ] && [ "$(date +%s)" -ge "$deadline" ]; }; then
@@ -129,6 +136,182 @@ headless_turn() {  # $1=task text $2=outfile
     [ "$deadline" -eq 0 ] || [ "$(date +%s)" -lt "$deadline" ] || return 125
     LC_ALL=C tr -d '\000' < "$outfile" > "$outfile.n" && mv "$outfile.n" "$outfile"
     return "$rc"
+}
+
+
+# Configuration fingerprints contain no credentials. Only the supported
+# adapters can prove that their next process resumes the saved exact session.
+headless_provider_tool() {
+    # A shell command can pin a different endpoint/key/profile. Only our exact
+    # single wrapper executable has the configuration contract used below.
+    python3 - "$CK_COMMON_DIR" "${CODEXC_HEADLESS_CMD:-}" <<'PYPROVIDER_TOOL'
+import os, shlex, shutil, sys
+try:
+    command = shlex.split(sys.argv[2])
+except ValueError:
+    raise SystemExit(1)
+if len(command) != 1:
+    raise SystemExit(1)
+path = shutil.which(command[0])
+if not path:
+    raise SystemExit(1)
+for tool in ('zcode', 'dsh'):
+    if os.path.realpath(path) == os.path.realpath(os.path.join(sys.argv[1], 'codexc-' + tool + '-worker')):
+        print(tool, end='')
+        raise SystemExit(0)
+raise SystemExit(1)
+PYPROVIDER_TOOL
+}
+
+headless_provider_fingerprint() {
+    python3 "$CK_COMMON_DIR/ck-provider.py" fingerprint "$1" 2>/dev/null
+}
+
+headless_provider_error() {
+    # Our adapters already classify the CLI's failed turn. Task text mentioning
+    # network.py or a test timeout is not evidence of an upstream failure.
+    python3 - "$1" <<'PYPROVIDER_ERROR'
+import os, re, stat, sys
+try:
+    fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+    with os.fdopen(fd, 'rb') as source:
+        if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+            raise SystemExit(1)
+        source.seek(max(0, os.fstat(source.fileno()).st_size - 65536))
+        lines = source.read(65536).decode('utf-8', 'replace').splitlines()
+except OSError:
+    raise SystemExit(1)
+classes = [line.removeprefix('CK_ERROR_CLASS: ') for line in lines
+           if re.fullmatch(r'CK_ERROR_CLASS: (auth|quota|transient|unknown)', line)]
+raise SystemExit(0 if len(classes) == 1 and classes[0] != 'unknown' else 1)
+PYPROVIDER_ERROR
+}
+
+headless_provider_needs_reload() {
+    [ "$1" = zcode ] || return 1
+    python3 "$CK_COMMON_DIR/ck-provider.py" needs-reload zcode >/dev/null 2>&1
+}
+
+headless_provider_session() {
+    python3 - "$1" <<'PYPROVIDER_SESSION'
+import hashlib, os, stat, sys
+from pathlib import Path
+
+tool = sys.argv[1]
+path = Path(os.environ.get('ZCODE_SESSION_FILE' if tool == 'zcode' else 'DSH_SESSION_FILE',
+                           '.codingkeeper/' + tool + '-session-id'))
+paths = [path, Path(str(path) + '.retry')] if tool == 'zcode' else [path]
+for candidate in paths:
+    try:
+        fd = os.open(candidate, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        continue
+    except OSError:
+        raise SystemExit(1)
+    with os.fdopen(fd, 'rb') as source:
+        if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+            raise SystemExit(1)
+        raw = source.read(8194)
+    sid = raw.rstrip(b'\r\n')
+    if not sid or len(sid) > 8192 or any(byte < 32 or byte == 127 for byte in sid):
+        raise SystemExit(1)
+    # The actual adapter checks wire syntax and project ownership before use.
+    # Keep only an identity hash in the shell; never discover a latest session.
+    print(hashlib.sha256(sid).hexdigest(), end='')
+    raise SystemExit(0)
+raise SystemExit(1)
+PYPROVIDER_SESSION
+}
+
+headless_turn() {  # shared by worker, gate repair and review repair
+    local tool fingerprint="" next="" seen="" session="" current_session rc changed=0
+    local wait_phase="" phase text next_at=0 transient=0 retry_at=0 now reloading=0 selections="|"
+    tool="$(headless_provider_tool)" || tool=headless
+    CK_PROVIDER_LAST_TOOL="$tool"; CK_PROVIDER_LAST_FINGERPRINT=""
+    if [ "$CODEXC_PROVIDER_RECOVERY" = 1 ] && [ "$tool" != headless ]; then
+        fingerprint="$(headless_provider_fingerprint "$tool")" || fingerprint=""
+    fi
+    seen="|$fingerprint|"
+    while :; do
+        CK_PROVIDER_LAST_FINGERPRINT="$fingerprint"
+        headless_turn_once "$1" "$2" "$reloading"; rc=$?
+        [ "$rc" -ne 0 ] && [ "$rc" != 124 ] && [ "$rc" != 125 ] || return "$rc"
+        [ "$CODEXC_PROVIDER_RECOVERY" = 1 ] && [ -n "$fingerprint" ] || return "$rc"
+        headless_provider_error "$2" || return "$rc"
+        current_session="$(headless_provider_session "$tool")" || return "$rc"
+        [ -n "$session" ] || session="$current_session"
+        [ "$session" = "$current_session" ] || return "$rc"
+        transient=0; retry_at=0
+        if grep -q '^CK_ERROR_CLASS: transient' "$2"; then
+            transient=1
+            if [ "${auto_resume:-0}" -lt "$CODEXC_AUTO_RESUME" ]; then
+                retry_at=$(( $(date +%s) + 600 * (${auto_resume:-0} + 1) ))
+            fi
+        fi
+        if [ "$changed" -ge "$CODEXC_PROVIDER_MAX_RESTARTS" ] && [ "$retry_at" -eq 0 ]; then
+            log "provider recovery limit reached ($changed/$CODEXC_PROVIDER_MAX_RESTARTS); session preserved"
+            return "$rc"
+        fi
+        while :; do
+            [ ! -e .codingkeeper/loop.halt ] || return 125
+            phase=waiting_provider; text="上游不可用，等待有效 provider 配置变更"; next_at=0
+            if [ "$retry_at" -gt 0 ]; then
+                phase=backoff; text="暂时故障，等待重试或 provider 配置变更"; next_at="$retry_at"
+            fi
+            if ! ck_interaction_check; then
+                phase=waiting_interaction; text="用户正在交互，自动恢复让位"; next_at=0
+            elif ! ck_window_check; then
+                [ "${CK_WINDOW_REASON:-}" = outside_window ] || return 125
+                phase=waiting_window; text="运行时段未开放，provider 恢复等待"; next_at="${CK_WINDOW_NEXT_OPEN:-0}"
+            else
+                current_session="$(headless_provider_session "$tool")" || return "$rc"
+                [ "$session" = "$current_session" ] || return "$rc"
+                next="$(headless_provider_fingerprint "$tool")" || next=""
+                if [ -n "$next" ] && [ "$next" != "$fingerprint" ]; then
+                    [ "$changed" -lt "$CODEXC_PROVIDER_MAX_RESTARTS" ] || return "$rc"
+                    case "$seen" in *"|$next|"*)
+                        log "provider configuration already attempted; session preserved"
+                        return "$rc" ;;
+                    esac
+                    fingerprint="$next"; seen="$seen$next|"; changed=$((changed + 1)); reloading=1
+                    selections="$selections$next|"
+                    log "provider configuration changed; resuming exact $tool session ($changed/$CODEXC_PROVIDER_MAX_RESTARTS)"
+                    wait_phase=""
+                    break
+                fi
+                if [ -n "$next" ] && [ "$next" = "$fingerprint" ] && headless_provider_needs_reload "$tool"; then
+                    case "$selections" in *"|$next|"*) return "$rc" ;; esac
+                    [ "$changed" -lt "$CODEXC_PROVIDER_MAX_RESTARTS" ] || return "$rc"
+                    # ZCode restores a persisted provider. Its verified runtime
+                    # selection can prove the configured default is newer even
+                    # when the file changed before this turn was launched.
+                    selections="$selections$next|"; changed=$((changed + 1)); reloading=1
+                    log "saved ZCode provider differs from the configured default; resuming exact session ($changed/$CODEXC_PROVIDER_MAX_RESTARTS)"
+                    break
+                fi
+                if [ "$transient" = 1 ] && [ "$CODEXC_AUTO_RESUME" -gt 0 ]; then
+                    [ "${auto_resume:-0}" -lt "$CODEXC_AUTO_RESUME" ] || return "$rc"
+                    now="$(date +%s)"
+                    if [ "$now" -ge "$retry_at" ] && [ "$next" = "$fingerprint" ]; then
+                        # Dynamic scope shares the runner's existing backoff
+                        # budget. Only formal task acceptance resets it.
+                        auto_resume=$(( ${auto_resume:-0} + 1 )); reloading=0
+                        log "transient provider failure; resuming exact session with unchanged configuration ($auto_resume/$CODEXC_AUTO_RESUME)"
+                        break
+                    fi
+                fi
+                # A provider-supplied reset timestamp retains the established
+                # persistent quota path; the marker will bind to this provider.
+                if grep -Eq '^CK_QUOTA_UNTIL: [0-9]{1,10}$' "$2"; then return "$rc"; fi
+            fi
+            headless_wait_status "$text" "$phase" "$next_at"
+            if [ "$wait_phase" != "$phase" ]; then
+                log "$phase: waiting without model requests; exact session retained"
+                wait_phase="$phase"
+            fi
+            sleep "$CODEXC_PROVIDER_POLL"
+        done
+    done
 }
 
 headless_save_turn() {
@@ -183,7 +366,8 @@ PYEVIDENCE
 }
 
 headless_wait_ready() {
-    local now quota quota_state phase next text last=""
+    local now quota quota_state phase next text last="" tool bound current rest
+    tool="$(headless_provider_tool)" || tool=headless
     while [ ! -e .codingkeeper/loop.halt ]; do
         now="$(date +%s)"; quota=0; phase=""; next=0
         # Manual interaction is the highest-priority reason. A stale quota
@@ -198,14 +382,16 @@ try:
     fd = os.open('.codingkeeper/quota-until', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode): raise ValueError('not a regular file')
-        raw = os.read(fd, 64)
+        raw = os.read(fd, 256)
     finally:
         os.close(fd)
-    if re.fullmatch(rb'v1 [0-9]{1,10}\n?', raw):
+    bound = re.fullmatch(rb'v2 ([0-9]{1,10}) (zcode|dsh) ([0-9a-f]{64})\n?', raw)
+    if bound or re.fullmatch(rb'v1 [0-9]{1,10}\n?', raw):
         value = int(raw.split()[1])
         if value > int(time.time()) + 7 * 86400:
             raise ValueError('quota reset timestamp exceeds seven days')
-        print('v1:' + str(value))
+        print(('v2:' + str(value) + ':' + bound[2].decode() + ':' + bound[3].decode())
+              if bound else 'v1:' + str(value))
     elif re.fullmatch(rb'[0-9]{1,10}\n?', raw):
         # v0 was written by the buggy window-derived implementation. It has
         # no trustworthy provenance, so discard it rather than waiting until
@@ -218,6 +404,23 @@ except (OSError, ValueError):
 PYREADQUOTA
 )" || return 2
             case "$quota_state" in
+                v2:*)
+                    rest="${quota_state#v2:}"; quota="${rest%%:*}"
+                    rest="${rest#*:}"; bound="${rest#*:}"
+                    if [ "$CODEXC_PROVIDER_RECOVERY" = 1 ] && [ "${rest%%:*}" = "$tool" ] && headless_provider_session "$tool" >/dev/null; then
+                        current="$(headless_provider_fingerprint "$tool")" || current=""
+                        if [ -n "$current" ] && [ "$current" != "$bound" ]; then
+                            headless_clear_provider_quota "$quota" "$tool" "$bound" || return 2
+                            log "provider configuration changed; cleared only its previous provider quota marker"
+                            continue
+                        fi
+                    fi
+                    if [ "$quota" -gt "$now" ]; then
+                        phase=waiting_quota; next="$quota"; text="配额耗尽 · 等待上游恢复或 provider 配置变更"
+                    else
+                        headless_clear_provider_quota "$quota" "${rest%%:*}" "$bound" || return 2
+                    fi
+                    ;;
                 v1:*)
                     quota="${quota_state#v1:}"
                     if [ "$quota" -gt "$now" ]; then
@@ -253,10 +456,27 @@ PYREADQUOTA
     return 1
 }
 
+headless_clear_provider_quota() {
+    python3 - "$1" "$2" "$3" <<'PYCLEAR_PROVIDER_QUOTA'
+import os, stat, sys
+path = '.codingkeeper/quota-until'
+expected = ('v2 %s %s %s' % tuple(sys.argv[1:])).encode()
+fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+with os.fdopen(fd, 'rb') as source:
+    before = os.fstat(source.fileno())
+    if not stat.S_ISREG(before.st_mode) or source.read(256).rstrip(b'\n') != expected:
+        raise SystemExit(1)
+after = os.lstat(path)
+if (before.st_ino, before.st_mtime_ns, before.st_ctime_ns) != (after.st_ino, after.st_mtime_ns, after.st_ctime_ns):
+    raise SystemExit(1)
+os.unlink(path)
+PYCLEAR_PROVIDER_QUOTA
+}
+
 headless_record_quota_until() {
-    local next="$1"
-    python3 - "$next" <<'PYQUOTA'
-import os, sys, tempfile, time
+    local next="$1" tool="${CK_PROVIDER_LAST_TOOL:-}" fingerprint="${CK_PROVIDER_LAST_FINGERPRINT:-}"
+    python3 - "$next" "$tool" "$fingerprint" <<'PYQUOTA'
+import os, re, sys, tempfile, time
 try:
     value = int(sys.argv[1])
 except (ValueError, TypeError):
@@ -266,7 +486,10 @@ if value <= int(time.time()) or value > int(time.time()) + 7 * 86400:
 fd, path = tempfile.mkstemp(prefix=".quota-", dir=".codingkeeper")
 try:
     with os.fdopen(fd, "w") as f:
-        f.write("v1 %d\n" % value)
+        if sys.argv[2] in ('zcode', 'dsh') and re.fullmatch(r'[0-9a-f]{64}', sys.argv[3]):
+            f.write("v2 %d %s %s\n" % (value, sys.argv[2], sys.argv[3]))
+        else:
+            f.write("v1 %d\n" % value)
         f.flush(); os.fsync(f.fileno())
     os.replace(path, ".codingkeeper/quota-until")
 finally:
@@ -1048,12 +1271,12 @@ for project in projects:
     live = alive(state / "loop.pid") or alive(state / "watcher.pid")
     try: fresh = 0 <= time.time() - float(snapshot.get("ts", 0)) <= 120
     except (TypeError, ValueError, OverflowError): fresh = False
-    waiting = snapshot.get("phase") in ("waiting_window", "waiting_quota", "waiting_interaction", "backoff", "waiting_fuel") and live and fresh
+    waiting = snapshot.get("phase") in ("waiting_window", "waiting_quota", "waiting_interaction", "waiting_provider", "backoff", "waiting_fuel") and live and fresh
     running = live and fresh and snapshot.get("active") is True and not waiting
     if parked:
         icon, label = "⏸", "已挂起"
     elif waiting:
-        icon, label = "◷", {"waiting_window": "等待时段", "waiting_quota": "等待配额", "waiting_interaction": "用户交互让位", "backoff": "等待重试", "waiting_fuel": "等待燃料"}[snapshot["phase"]]
+        icon, label = "◷", {"waiting_window": "等待时段", "waiting_quota": "等待配额", "waiting_interaction": "用户交互让位", "waiting_provider": "等待上游切换", "backoff": "等待重试", "waiting_fuel": "等待燃料"}[snapshot["phase"]]
     else:
         icon, label = ("🔥", "任务执行中") if running else ("·", "空闲")
     ready = done = 0

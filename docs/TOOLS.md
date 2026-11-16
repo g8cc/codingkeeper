@@ -2,6 +2,8 @@
 
 本轮覆盖全部六种工具。下表表示离线协议与管控回归范围，真实服务与凭证未在本轮调用验证。历史在线验收和凭证失效记录不能代表当前状态。
 
+六工具的有效 provider 配置变更恢复使用共享适配层；四种 TUI 保留原 pane 并 exact resume，ZCode/dsh 在共享 headless turn 保留任务和 session。未知或模糊配置保留现场，具体路径、控制参数与真实服务边界见 [provider 自动恢复](PROVIDER-RECOVERY.md)。新增覆盖为 provider-config、provider-supervisor、provider-headless。
+
 | 工具 | 通道与入口 | 本轮离线覆盖 | 主要套件 |
 |---|---|---|---|
 | Codex | TUI：`codexc` / `ck codex` | 启动、当前轮完成/中止、重试、队列/gate/review、清理 | startup、loop-daily、四工具 integration、faultinjection |

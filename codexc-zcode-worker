@@ -40,6 +40,17 @@ args=(--prompt "$task" --cwd "$PWD" --mode "$ZCODE_MODE" --no-color --json --out
       --disallowed-tools "AskUserQuestion EnterPlanMode ExitPlanMode")
 [ -z "$sid" ] || args=(--resume "$sid" "${args[@]}")
 
+# ZCode restores its persisted model on --resume. Apply an explicit new
+# provider default with the CLI's local /model command, then verify the same
+# session recorded it before sending the original task.
+if [ -n "$sid" ] && [ -n "${CODEXC_ZCODE_MODEL_SELECTION:-}" ]; then
+    python3 "$WORKER_DIR/ck-provider.py" prepare-zcode "$sid" "$ZCODE_CJS" "$ZCODE_MODE" || {
+        echo "zcode provider recovery could not verify the original session model; task retained"
+        echo "CK_ERROR_CLASS: unknown"
+        exit 1
+    }
+fi
+
 # capture via TEMP FILE, never $(...): zcode spawns background children
 # (MCP servers etc.) that inherit stdout and would hold a pipe open forever,
 # blocking command substitution after the turn itself has finished
@@ -65,7 +76,7 @@ classify_error() {  # $1=raw stdout $2=raw stderr -> auth|quota|transient|unknow
     # Provider codes take precedence over prose: the permanent model-coverage
     # error 1006 also mentions remaining quota. Bare numbers in logs are not
     # codes; accept only an explicit code/error_code field from a failed CLI.
-    provider_class="$(python3 - "$both" <<'PYCLASS'
+    provider_class="$(python3 - "$both" "$WORKER_DIR/ck-provider.py" <<'PYCLASS'
 import re, sys
 codes = set(re.findall(r'''(?<![\w])['"]?(?:error_?code|code)['"]?\s*[:=]\s*['"]?(1005|1006|3008)(?![0-9])''',
                        sys.argv[1], flags=re.I))
@@ -75,6 +86,13 @@ elif '1005' in codes:
     print('quota')
 elif '3008' in codes:
     print('transient')
+else:
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('ck_provider_error', sys.argv[2])
+    helper = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(helper)
+    if helper.error_is_missing_provider(sys.argv[1]):
+        print('auth')
 PYCLASS
 )"
     if [ -n "$provider_class" ]; then printf '%s' "$provider_class"; return; fi

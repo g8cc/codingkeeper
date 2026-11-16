@@ -69,6 +69,8 @@ SKIP 识别包括行首 `SKIP:` 和 unittest 的 skipped 汇总/逐项提示；�
 | 工具会话与派生数据 | zcode-session、dsh-session、session-hygiene、relocation |
 | 时段、配额与人工会话 | window、zcode-window、watch-window、zcode-quota、interaction |
 | 启动、续命和日常调度 | startup、night-loop、loop-daily、tool-watchers |
+| Codex 主/子会话隔离与 429 续跑 | codex-watch：文件发现、目录回退、loop、主回合发送及子 Agent 完成隔离 |
+| Provider 配置切换后恢复 | provider-config、provider-supervisor、provider-headless：有效配置、exact resume、实际进程、草稿/归属/预算与任务连续性 |
 | 燃料、领域包和晨报 | prompts、fuel-extension、product-fuel |
 | 状态性能与日志 | status、quality-trend、log-location |
 | 部署与桌面 | watchdog-deploy、watchdog-install、install-deps、desktop、swift-gate |

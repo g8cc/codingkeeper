@@ -4,10 +4,76 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import stat
 import subprocess
 import sys
 import tempfile
 import time
+
+
+def main_codex_rollout(sessions, project, candidates=None, max_age=None):
+    """Select a project-owned main thread; subagents share cwd with their parent."""
+    sessions = Path(sessions).resolve()
+    project = os.path.realpath(project)
+    if candidates is None:
+        candidates = (Path(current) / name
+                      for current, _dirs, files in os.walk(sessions)
+                      for name in files if name.endswith('.jsonl'))
+    ranked = []
+    for path in candidates:
+        path = Path(path)
+        try:
+            if path.suffix != '.jsonl' or not path.resolve().is_relative_to(sessions):
+                continue
+            info = path.lstat()
+            if not stat.S_ISREG(info.st_mode):
+                continue
+            if max_age is not None and time.time() - info.st_mtime > max_age:
+                continue
+            ranked.append((info.st_mtime_ns, str(path)))
+        except OSError:
+            continue
+    for _stamp, path in sorted(ranked, reverse=True):
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+            with os.fdopen(fd, 'rb') as source:
+                if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+                    continue
+                for _ in range(5):
+                    line = source.readline(65537)
+                    if not line or len(line) > 65536:
+                        break
+                    try:
+                        record = json.loads(line)
+                    except (ValueError, UnicodeError):
+                        continue
+                    if not isinstance(record, dict) or record.get('type') not in (None, 'session_meta'):
+                        continue
+                    meta = record.get('payload')
+                    if not isinstance(meta, dict):
+                        continue
+                    cwd, origin = meta.get('cwd'), meta.get('source')
+                    if isinstance(origin, dict) and 'subagent' in origin:
+                        break
+                    if isinstance(origin, str) and origin.lower().startswith('subagent'):
+                        break
+                    if isinstance(cwd, str) and cwd and os.path.realpath(cwd) == project:
+                        return path
+        except OSError:
+            continue
+    return ''
+
+
+def select_codex_rollout(argv):
+    import argparse
+    parser = argparse.ArgumentParser(description='Select a main Codex thread, never a subagent')
+    parser.add_argument('sessions')
+    parser.add_argument('project')
+    parser.add_argument('--candidates', type=Path)
+    parser.add_argument('--max-age', type=int)
+    args = parser.parse_args(argv)
+    candidates = args.candidates.read_text().splitlines() if args.candidates else None
+    sys.stdout.write(main_codex_rollout(args.sessions, args.project, candidates, args.max_age))
 
 def write_atomic(path, text):
     fd, name = tempfile.mkstemp(prefix='.watcher-', dir=path.parent)
@@ -68,7 +134,10 @@ def launch(script, pane, owner, logfile):
 
 if __name__ == '__main__':
     try:
-        print(launch(*sys.argv[1:]))
+        if sys.argv[1:2] == ['--codex-rollout']:
+            select_codex_rollout(sys.argv[2:])
+        else:
+            print(launch(*sys.argv[1:]))
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         print(f'codexc: cannot launch watcher: {error}', file=sys.stderr)
         sys.exit(1)

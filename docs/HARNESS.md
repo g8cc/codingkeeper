@@ -54,7 +54,7 @@ Headless：`ck zcode run` / `ck dsh run` 经 `codexc-headless` 启动阻塞子�
 | 队列离线结构核对 | `ck-leaves.py` |
 | 工具会话与协议 | `codexc-zcode-worker`、`codexc-dsh-worker`、`ck-zcode-session.py`、`ck-dsh-session.py` |
 | 审查最终响应与进程监督 | `codexc-review-leaf`、`ck-review-process.py` |
-| 错误续命与空闲交接 | `ck-watcher.py`、`ck-watch-tools.sh`、`ck-night-loop.py` |
+| 错误续命、provider 恢复与空闲交接 | `ck-watcher.py`、`ck-watch-tools.sh`、`ck-provider.py`、`ck-tool-supervisor.py`、`ck-night-loop.py` |
 | 时段、人工占用、配置和日志 | `ck-window.py`、`ck-interaction.py`、`ck-config.py`、`ck-log.py` |
 | 燃料、领域包、晨报与趋势 | `ck-prompts.py`、`ck-fuel-packs.py`、`ck-morning.py`、`ck-quality-trend.py` |
 | 全局看门狗、部署与桌面 | `burn-watch.sh`、`ck-watchdog-alive.sh`、`packaging/`、`desktop/CodingKeeperBar.swift` |

@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-11-16 Provider 配置切换恢复（未发布）
+
+- 四种 TUI 在 provider 故障与有效配置变更后，于同一终端续接确切原会话；共享指纹、生命周期监督和工具原生续接，保护草稿、归属、旧事件及重试预算。
+- ZCode/dsh headless 在共享 turn 等待新配置，保留任务、session 与验收阶段；配额等待可绑定旧 provider，手动 halt、运行窗口与交互优先。
+- 新增 provider 配置、supervisor 与 headless 回归及 [运维说明](docs/PROVIDER-RECOVERY.md)。验证结果见 [执行计划](docs/plans/2026-11-16-provider-recovery.md)。
+
+## 2026-11-16 Codex 自动续跑修复（未发布）
+
+- 修复同目录子 Agent 更新日志后抢占 watcher/loop 的主会话发现，导致主回合 429 被漏读、子 Agent 完成误显示为主任务完成。
+- watcher 的进程文件路径与目录回退、loop 共用主会话筛选，同时核验物理项目归属并排除 `session_meta.source.subagent`；新增绑定日志。
+- 新增 codex-watch 回归，覆盖主回合 429 自动发送、历史不重放、子会话/跨项目/坏文件隔离、配额禁重试和重试上限。验证记录见 [执行计划](docs/plans/2026-11-16-codex-subagent-watcher.md)。
+
 ## 2026-11-15 Harness 与文档体系（未发布）
 
 - audit 改为自动发现 `tests/*-audit.py`，新增失败注入锁定“新增回归漏跑但全绿”的缺口。

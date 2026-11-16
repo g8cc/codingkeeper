@@ -52,6 +52,8 @@ link "$HERE/ck-leaves.py" "$CODEX_BIN_DIR/ck-leaves.py"
 link "$HERE/ck-review-process.py" "$CODEX_BIN_DIR/ck-review-process.py"
 link "$HERE/ck-watch-tools.sh" "$CODEX_BIN_DIR/ck-watch-tools.sh"
 link "$HERE/ck-watcher.py" "$CODEX_BIN_DIR/ck-watcher.py"
+link "$HERE/ck-provider.py" "$CODEX_BIN_DIR/ck-provider.py"
+link "$HERE/ck-tool-supervisor.py" "$CODEX_BIN_DIR/ck-tool-supervisor.py"
 link "$HERE/ck-night-loop.py" "$CODEX_BIN_DIR/ck-night-loop.py"
 link "$HERE/codexc" "$CODEX_BIN_DIR/codexc"   # backward compat
 # 内部实现脚本（ck 通过绝对路径调用）

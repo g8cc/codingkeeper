@@ -34,6 +34,8 @@ ck codex                # select the Codex adapter; ck --help lists all tools
 
 Detach (`Ctrl-a` `d`) to leave it running; `codexc` again to reattach. All commands work from plain SSH sessions too.
 
+When a provider fails and you update its effective configuration, Keeper can resume the same session in the same terminal. This covers all four TUI tools and the ZCode/dsh headless adapters, with bounded retries and draft protection. See [provider recovery](docs/PROVIDER-RECOVERY.md) for configuration and compatibility limits.
+
 ## Usage
 
 | Command | Effect |

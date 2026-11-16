@@ -313,7 +313,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         var running = false
         var phase = ""
         var nextRunAt: TimeInterval = 0
-        var hasWaitingPhase: Bool { ["waiting_window", "waiting_quota", "backoff", "waiting_fuel", "waiting_interaction"].contains(phase) }
+        var hasWaitingPhase: Bool { ["waiting_window", "waiting_quota", "backoff", "waiting_fuel", "waiting_interaction", "waiting_provider"].contains(phase) }
         var waiting = false
         var startedAt: TimeInterval = 0
         var ts: TimeInterval = 0
@@ -363,6 +363,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "backoff": return next.isEmpty ? "重试等待" : "重试等待 · \(next) 后重试"
         case "waiting_fuel": return "等待新任务或工程 Prompt"
         case "waiting_interaction": return "用户正在交互，自动任务让位"
+        case "waiting_provider": return "等待 provider 配置变更，保留原会话"
         default: return ""
         }
     }

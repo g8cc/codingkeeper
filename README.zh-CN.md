@@ -36,6 +36,8 @@ ck codex                # 选择 Codex 适配器；ck --help 查看其他工具
 
 `Ctrl-a` `d` 脱离（codex 继续后台跑），再敲 `codexc` 接回来。纯 SSH 环境下所有命令同样可用。
 
+上游额度、认证或连接失败后，更新有效 provider 配置即可由 Keeper 在原终端续接原会话。四种 TUI 和 ZCode/dsh headless 适配器共用有界恢复，保护未发送草稿与任务连续性。配置与兼容边界见 [provider 自动恢复](docs/PROVIDER-RECOVERY.md)。
+
 ## 用法
 
 | 命令 | 作用 |

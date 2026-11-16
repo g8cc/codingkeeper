@@ -37,8 +37,8 @@ tests/run-all --profile full --keep-artifacts --report /private/tmp/ck-full-repo
 | 改动 | 实现入口 | 优先回归 |
 |---|---|---|
 | 队列、锁、状态与共享验收 | `ck-common.sh`、`ck-leaf.py` | acceptance、leaf-runtime、leaves、status、evidence-retention |
-| TUI 启动、事件与续命 | `codexc`、`codexc-loop`、`ck-watcher.py`、`ck-watch-tools.sh` | startup、loop-daily、tool-watchers、integration、faultinjection |
-| headless 运行与会话归属 | `codexc-headless`、`codexc-*-worker`、`ck-*-session.py` | burn-runtime、zcode-session、dsh-session、session-hygiene |
+| TUI 启动、事件与续命 | `codexc`、`codexc-loop`、`ck-watcher.py`、`ck-watch-tools.sh`、`ck-provider.py`、`ck-tool-supervisor.py` | startup、codex-watch、provider-config、provider-supervisor、loop-daily、tool-watchers、integration、faultinjection |
+| headless 运行与会话归属 | `codexc-headless`、`codexc-*-worker`、`ck-*-session.py` | provider-headless、burn-runtime、zcode-session、dsh-session、session-hygiene |
 | gate、审查与受管子进程 | `ck-common.sh`、`ck-review-process.py`、`codexc-review-leaf` | acceptance、leaf-runtime、review-leaf、faultinjection |
 | 时段、配额、人工占用 | `ck-window.py`、`ck-interaction.py` | window、zcode-window、watch-window、zcode-quota、interaction |
 | 燃料、待决策和晨报 | `ck-prompts.py`、`ck-fuel-packs.py`、`ck-morning.py` | prompts、fuel-extension、product-fuel |

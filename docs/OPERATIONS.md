@@ -80,10 +80,15 @@ idle(队列取任务) ──投喂──▶ task(work → gate → review) ─�
 | 情况 | 处理 |
 |---|---|
 | 429 / 502 / 断流 / **模型容量满** 等瞬时错误 | 自动发 continue（冷却 10s，上限 30 次） |
-| usage limit / 订阅额度类 | **永不续命**——等待窗口重置才是正解，可排 `codexc -t` 定时 |
+| usage limit / 订阅额度类 | 原 provider 配置不变时不发送 continue；等待窗口重置，或更新有效 provider 配置后由恢复流程续接 |
 | 错误来源 | 每工具不同: codex=rollout 尾部 task_complete.error；claude=JSONL `isApiErrorMessage`(内置重试耗尽后)；pi=`stopReason:"error"`；opencode=opencode.db 错误 assistant 行 |
+| Codex 启用子 Agent | watcher 与 loop 只发现同一物理项目的主会话，排除 `session_meta.source.subagent`。子 Agent 与主会话共用 cwd，不得仅凭较新 mtime 切换到子会话；watch 日志记录 pane 绑定的主 rollout |
 | 连续续命 30 次仍错 | watcher 停止 + 通知（防 token 无底洞） |
 | 长跑会话的 watcher 版本旧 | attach 复用已验证活跃的 watcher，缺失时补挂；升级旧 watcher 需重新启动会话 |
+
+`exceeded retry limit, last status: 429 Too Many Requests` 属于瞬时错误，可自动 continue；订阅/额度类错误仍优先阻止重试。启动或更换 watcher 默认跳过已有历史错误，避免对旧失败反复下发。源码修复不会替换已经运行的 Bash watcher；现有会话需切换到新 watcher 后才处理后续新错误，当前已停住的任务需要明确选择续跑。
+
+新运行时还支持 [provider 配置切换恢复](PROVIDER-RECOVERY.md)：额度、认证或连接失败后，若用户已配置新的有效 provider，四种 TUI 会在同一 pane 续接原会话，ZCode/dsh 保留原任务和 session 后恢复。没有配置变化仍遵守额度禁重试；草稿、手动 halt 和 headless 运行窗口优先。`CODEXC_PROVIDER_RECOVERY=0` 可禁用，连续配置切换默认上限 2 次。
 
 ### 运行器自身
 

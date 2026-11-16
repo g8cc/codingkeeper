@@ -86,8 +86,8 @@ case "$CODEXC_TOOL" in
     *) echo "codexc-loop: unsupported CODEXC_TOOL '$CODEXC_TOOL' (use codex|claude|pi|opencode)" >&2; exit 1 ;;
 esac
 CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-PI_DIR="${PI_DIR:-$HOME/.pi/agent}"
-OPENCODE_DIR="${OPENCODE_DATA_DIR:-$HOME/.local/share/opencode}"
+PI_DIR="${PI_CODING_AGENT_DIR:-${PI_DIR:-$HOME/.pi/agent}}"
+OPENCODE_DIR="${OPENCODE_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/opencode}"
 
 CODEXC_LOOP_POLL="$(normalize_uint CODEXC_LOOP_POLL "${CODEXC_LOOP_POLL:-5}" 5 1 60)"
 CODEXC_GATE_TIMEOUT="$(normalize_uint CODEXC_GATE_TIMEOUT "${CODEXC_GATE_TIMEOUT:-900}" 900 5 86400)"
@@ -273,42 +273,8 @@ find_rollout() {  # $1=pane -> prints path or nothing
     esac
     proj="$(tmux display-message -p -t "$pane" '#{pane_current_path}' 2>/dev/null)"
     [ -n "$proj" ] || return 0
-    python3 - "$CODEX_HOME_DIR/sessions" "$proj" <<'PYEOF'
-import json, os, sys
-root, proj = sys.argv[1], os.path.realpath(sys.argv[2])
-if not os.path.isdir(root):
-    raise SystemExit(0)
-cands = []
-for current, dirs, files in os.walk(root):
-    for name in files:
-        if name.endswith(".jsonl"):
-            path = os.path.join(current, name)
-            try:
-                cands.append((os.stat(path).st_mtime, path))
-            except OSError:
-                continue
-cands.sort(reverse=True)
-# Match project ownership before deciding which candidate wins. A global
-# candidate cap silently blinds older projects when many sessions are active.
-for _mtime, path in cands:
-    try:
-        with open(path, "rb") as fh:
-            for _ in range(5):
-                line = fh.readline()
-                if not line:
-                    break
-                try:
-                    d = json.loads(line)
-                except Exception:
-                    continue
-                payload = d.get("payload") if isinstance(d, dict) else None
-                cwd = payload.get("cwd") if isinstance(payload, dict) else None
-                if isinstance(cwd, str) and cwd and os.path.realpath(cwd) == proj:
-                    sys.stdout.write(path)
-                    raise SystemExit(0)
-    except OSError:
-        continue
-PYEOF
+    python3 "$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")/ck-watcher.py" \
+        --codex-rollout "$CODEX_HOME_DIR/sessions" "$proj"
 }
 
 # Read only a bounded tail and use the actual event byte offset as its token.
@@ -702,6 +668,15 @@ run_driver() {  # $1=pane
             last_progress_ts=$(date +%s)
         else
             activity=0
+        fi
+        # Provider waiting is a live, supervised pause, not a stalled task.
+        # Require this run's generation and the exact rollout already fed.
+        if [ -n "${CK_PROVIDER_GENERATION:-}" ] && [ -n "$feed_path" ] && [ "$rollout" = "$feed_path" ] &&
+           python3 "$CK_COMMON_DIR/ck-tool-supervisor.py" waiting "$CODEXC_TOOL" "$pane" \
+             "$(tmux show-option -p -v -t "$pane" @codexc_owner 2>/dev/null)" "$rollout" 2>/dev/null; then
+            last_progress_ts=$(date +%s); errored_since=0
+            status_write "上游不可用，等待有效 provider 配置变更" "$CODEXC_TOOL" 0 0 waiting_provider 0
+            continue
         fi
         if [ $(( $(date +%s) - last_progress_ts )) -ge "$CODEXC_LOOP_STALL" ]; then
             notify "循环挂起: 投喂后 ${CODEXC_LOOP_STALL}s 无进展 — 请检查 TUI ($task)"

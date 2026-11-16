@@ -68,6 +68,9 @@
 #   CODEXC_AUTO_YES        auto-approve mode: 1 = full-auto (default: skip all
 #                          approval prompts, no sandbox), 2 = skip prompts but
 #                          keep the workspace sandbox, 0 = off (codex asks)
+#   CODEXC_PROVIDER_RECOVERY    reload changed provider after failure (0/1, default 1)
+#   CODEXC_PROVIDER_MAX_RESTARTS bounded configuration switches (default 2)
+#   CODEXC_PROVIDER_POLL        configuration check seconds (default 2)
 #   CODEXC_NIGHT_IDLE      night idle takeover seconds (default 600; 0 disables)
 #   CODEXC_NIGHT_WINDOW    takeover window (default 00:00-08:00)
 #   CODEXC_NIGHT_TZ        window timezone (default Asia/Singapore)
@@ -266,8 +269,8 @@ seed_claude_trust() {
 # opencode 2.0: sessions in ~/.local/share/opencode/storage/session/global/
 # ses_*.json (directory field), messages in storage/message/<sid>/msg_*.json
 # (role, error{data.statusCode}, time.finish), text parts in storage/part/.
-PI_DIR="${PI_DIR:-$HOME/.pi/agent}"
-OPENCODE_DIR="${OPENCODE_DATA_DIR:-$HOME/.local/share/opencode}"
+PI_DIR="${PI_CODING_AGENT_DIR:-${PI_DIR:-$HOME/.pi/agent}}"
+OPENCODE_DIR="${OPENCODE_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/opencode}"
 
 pi_project_dir() {  # $1=cwd -> munged sessions dir (first that exists)
     local p form
@@ -521,6 +524,7 @@ watch_and_run() {
         sleep "$CODEXC_POLL"
     done
     sess_file="$rollout"
+    echo "$(date '+%F %T') watcher: pane $pane main rollout $sess_file" >> "$WATCHLOG"
     sess_off="$(stat -f '%z' "$sess_file" 2>/dev/null || echo 0)"   # skip history
 
     # 中途接入 (attach 换挂/恢复): rollout 尾部若存在未配对的 task_started,
@@ -596,6 +600,7 @@ PYEOF4
             newest="$(watcher_find_rollout "$pane")"
             if [ -n "$newest" ] && [ "$newest" != "$sess_file" ]; then
                 sess_file="$newest"
+                echo "$(date '+%F %T') watcher: pane $pane main rollout changed to $sess_file" >> "$WATCHLOG"
                 sess_off=-1                   # -1 = 从新文件 EOF 起步 (跳过历史)
             fi
         fi
@@ -661,14 +666,17 @@ PYEOF6
         while IFS=$TAB read -r api_code api_text; do
             case "$api_code" in
                 start)
+                    ck_provider_event "$pane" "$follow_pid" "$sess_file" "$sess_off-start" clear || true
                     turn_start="$(date +%s)"
                     write_status "▶️ $last_prompt" 1 "$turn_start"
                     continue ;;
                 prompt)
+                    ck_provider_event "$pane" "$follow_pid" "$sess_file" "$sess_off-prompt" clear || true
                     [ -n "$api_text" ] && last_prompt="$api_text"
                     [ -n "$turn_start" ] && write_status "▶️ $last_prompt" 1 "$turn_start"
                     continue ;;
                 done)
+                    ck_provider_event "$pane" "$follow_pid" "$sess_file" "$sess_off-done" clean || true
                     turn_start_prev="$turn_start"; turn_start=""
                     write_status "✅ 完成: $api_text" 0 "${turn_start_prev:-0}"
                     [ "$CODEXC_NOTIFY" = "1" ] && [ -n "$turn_start_prev" ] || continue
@@ -682,6 +690,8 @@ PYEOF6
                 *) continue ;;
             esac
             [ -n "$api_text" ] || continue
+            ck_provider_event "$pane" "$follow_pid" "$sess_file" "$sess_off" error "$api_text"
+            [ "$?" != 75 ] || continue
             echo "$(date '+%F %T') codex turn error: ${api_text:0:100}" >> "$WATCHLOG"
             now="$(date +%s)"
             # 分流: usage limit / 未知错误 = 不可自动续跑 (通知用户处理, 60s 节流);
@@ -721,6 +731,8 @@ PYEOF6
             sleep 3
             [ -n "$(tmux display-message -p -t "$pane" '#{pane_id}' 2>/dev/null)" ] || return 0
             tmux capture-pane -p -t "$pane" 2>/dev/null | grep -q "to interrupt" && continue
+            ck_provider_event "$pane" "$follow_pid" "$sess_file" "$sess_off" error "$api_text"
+            [ "$?" != 75 ] || continue
             echo "$(date '+%F %T') Turn error in rollout -> auto-continue #$((count+1)): ${api_text:0:80}" >> "$WATCHLOG"
             kill -0 "$follow_pid" 2>/dev/null || return 0
             tmux send-keys -t "$pane" -l -- "$CODEXC_MESSAGE" || return 0
@@ -794,9 +806,7 @@ spawn_watcher() {  # $1=owner pid $2=pane; result in SPAWNED_WATCHER_PID
 # the watcher's rollout discovery: newest sessions/*.jsonl held open inside
 # the pane's process tree (same approach as codexc-loop)
 watcher_find_rollout() {  # $1=pane -> prints path or nothing
-    local pane="$1" root_pids all p f m newest="" newest_m=0 lsof_out
-    local home_log="$CODEX_HOME_DIR" home_phys
-    home_phys="$(cd "$CODEX_HOME_DIR" 2>/dev/null && pwd -P)"
+    local pane="$1" root_pids all p newest="" lsof_out
     root_pids="$(tmux display-message -p -t "$pane" '#{pane_pid}' 2>/dev/null)"
     [ -n "$root_pids" ] || return 0
     all="$root_pids"
@@ -815,61 +825,15 @@ watcher_find_rollout() {  # $1=pane -> prints path or nothing
     local pid_csv
     pid_csv="$(printf '%s' "$all" | tr ' ' ',')"
     lsof -Fn -p "$pid_csv" 2>/dev/null | sed -n 's/^n//p' > "$lsof_out"
-    while IFS= read -r f; do
-        # macOS /tmp -> /private/tmp etc.: the fd path is physical while
-        # CODEX_HOME may be logical — accept both forms
-        # codex 新版把 rollout 放进日期子目录 (sessions/YYYY/MM/DD/) — 按前缀
-        # + .jsonl 后缀匹配任意深度, 扁平 glob 会静默失明
-        case "$f" in
-            "$home_log"/sessions/*|"$home_phys"/sessions/*) ;;
-            *) continue ;;
-        esac
-        case "$f" in
-            *.jsonl) ;;
-            *) continue ;;
-        esac
-        m=$(stat -f '%m' "$f" 2>/dev/null || echo 0)
-        [ "$m" -gt "$newest_m" ] && newest_m=$m && newest="$f"
-    done < "$lsof_out"
+    # The app-server can hold parent and subagent rollouts in the same process.
+    # cwd alone cannot identify the TUI thread: reject source.subagent on both
+    # the open-file fast path and the directory fallback.
+    newest="$(python3 "$SCRIPT_DIR/ck-watcher.py" --codex-rollout \
+        "$CODEX_HOME_DIR/sessions" "$PWD" --candidates "$lsof_out")"
     rm -f "$lsof_out"
-    # codex 更新版本写入即关, 不再持有 fd — lsof 路径会空手而归。fallback:
-    # 找 5 分钟内活跃的 rollout, 用文件头 session_meta.cwd 匹配当前项目
-    # (多项目并行各认各的会话, 不误抢别家的)
     if [ -z "$newest" ]; then
-        newest="$(python3 - "$CODEX_HOME_DIR/sessions" "$PWD" <<'PYEOF5'
-import json, os, sys, time
-
-root, proj = sys.argv[1], os.path.realpath(sys.argv[2])
-if not os.path.isdir(root):
-    raise SystemExit(0)
-now = time.time()
-cands = []
-for current, dirs, files in os.walk(root, onerror=lambda _e: None):
-    for name in files:
-        if not name.endswith(".jsonl"):
-            continue
-        path = os.path.join(current, name)
-        try:
-            info = os.stat(path)
-        except OSError:
-            continue
-        if now - info.st_mtime <= 300:
-            cands.append((info.st_mtime, path))
-cands.sort(reverse=True)
-for _mtime, path in cands:
-    try:
-        with open(path, encoding="utf-8") as fh:
-            meta = json.loads(fh.readline())
-        payload = meta.get("payload")
-        cwd = payload.get("cwd") if isinstance(payload, dict) else None
-        cwd = cwd or meta.get("cwd") or ""
-        if os.path.realpath(cwd) == proj:
-            print(path)
-            break
-    except Exception:
-        continue
-PYEOF5
-)"
+        newest="$(python3 "$SCRIPT_DIR/ck-watcher.py" --codex-rollout \
+            "$CODEX_HOME_DIR/sessions" "$PWD" --max-age 300)"
     fi
     [ -n "$newest" ] && printf '%s' "$newest"
 }
@@ -1085,6 +1049,8 @@ if [ -n "${TMUX:-}" ]; then
     fi
     # A background watcher must never be started inside command substitution:
     # inherited output pipes otherwise keep the launcher waiting for EOF.
+    CK_PROVIDER_GENERATION="$(python3 -c 'import uuid; print(uuid.uuid4().hex)')" || exit 1
+    export CK_PROVIDER_GENERATION
     watcher=""
     if ! spawn_watcher "$$" "$PANE"; then
         echo "codexc: watcher unavailable; see $WATCHLOG" >&2
@@ -1152,10 +1118,10 @@ if [ -n "${TMUX:-}" ]; then
         while ! scheduler_available; do sleep 5; done
     fi
     case "$CODEXC_TOOL" in
-        claude)   claude   $codex_flags "$@" ;;
-        pi)       pi       $codex_flags "$@" ;;
-        opencode) opencode $codex_flags "$@" ;;
-        *)        codex    $codex_flags "$@" ;;
+        claude)   python3 "$SCRIPT_DIR/ck-tool-supervisor.py" claude "$PANE" "$$" -- claude $codex_flags "$@" ;;
+        pi)       python3 "$SCRIPT_DIR/ck-tool-supervisor.py" pi "$PANE" "$$" -- pi $codex_flags "$@" ;;
+        opencode) python3 "$SCRIPT_DIR/ck-tool-supervisor.py" opencode "$PANE" "$$" -- opencode $codex_flags "$@" ;;
+        *)        python3 "$SCRIPT_DIR/ck-tool-supervisor.py" codex "$PANE" "$$" -- codex $codex_flags "$@" ;;
     esac
     rc=$?
     if [ -n "$interaction_token" ]; then
@@ -1213,7 +1179,7 @@ codex_args=""
 # A long-lived tmux server carries the environment from its first client.
 # Clear supported settings there, then apply this invocation's values explicitly.
 inner_env=""
-for setting in CODEXC_NOTIFY CODEXC_NOTIFY_SECS CODEXC_NOTIFY_GAP CODEXC_LOOP_NOTIFY CODEXC_LOOP_POLL CODEXC_LOOP_STALL CODEXC_TURN_TIMEOUT CODEXC_LOOP_DRY CODEXC_LOOP_IDLE CODEXC_IDLE_PARK CODEXC_LOOP_ROLLOUT CODEXC_GATE_TIMEOUT CODEXC_GATE_RETRIES CODEXC_REVIEW_CMD CODEXC_REVIEW_PASS CODEXC_REVIEW_ROUNDS CODEXC_REVIEW_PARSE_RETRIES CODEXC_REVIEW_TIMEOUT CODEXC_BANNER CODEXC_PROMPT_ROTATION CODEXC_REQUIRE_GATE CODEXC_NIGHT_IDLE CODEXC_NIGHT_WINDOW CODEXC_NIGHT_TZ CODEXC_ACTIVE_WINDOW CODEXC_ACTIVE_TZ PI_DIR OPENCODE_DATA_DIR; do
+for setting in CODEXC_NOTIFY CODEXC_NOTIFY_SECS CODEXC_NOTIFY_GAP CODEXC_LOOP_NOTIFY CODEXC_LOOP_POLL CODEXC_LOOP_STALL CODEXC_TURN_TIMEOUT CODEXC_LOOP_DRY CODEXC_LOOP_IDLE CODEXC_IDLE_PARK CODEXC_LOOP_ROLLOUT CODEXC_GATE_TIMEOUT CODEXC_GATE_RETRIES CODEXC_REVIEW_CMD CODEXC_REVIEW_PASS CODEXC_REVIEW_ROUNDS CODEXC_REVIEW_PARSE_RETRIES CODEXC_REVIEW_TIMEOUT CODEXC_PROVIDER_RECOVERY CODEXC_PROVIDER_MAX_RESTARTS CODEXC_PROVIDER_POLL CODEXC_BANNER CODEXC_PROMPT_ROTATION CODEXC_REQUIRE_GATE CODEXC_NIGHT_IDLE CODEXC_NIGHT_WINDOW CODEXC_NIGHT_TZ CODEXC_ACTIVE_WINDOW CODEXC_ACTIVE_TZ PI_DIR PI_CODING_AGENT_DIR XDG_CONFIG_HOME XDG_DATA_HOME OPENCODE_CONFIG OPENCODE_CONFIG_CONTENT OPENCODE_DATA_DIR CLAUDE_CONFIG_DIR; do
     inner_env="$inner_env -u $setting"
 done
 inner="env$inner_env PATH=$(printf '%q' "$PATH") \
@@ -1231,7 +1197,7 @@ CODEXC_AUTO_YES=$(printf '%q' "$CODEXC_AUTO_YES") \
 CODEXC_LOOP=$(printf '%q' "${CODEXC_LOOP:-}") \
 CODEXC_TOOL=$(printf '%q' "$CODEXC_TOOL") \
 CLAUDE_CONFIG_DIR=$(printf '%q' "$CLAUDE_DIR")"
-for setting in CODEXC_NOTIFY CODEXC_NOTIFY_SECS CODEXC_NOTIFY_GAP CODEXC_LOOP_NOTIFY CODEXC_LOOP_POLL CODEXC_LOOP_STALL CODEXC_TURN_TIMEOUT CODEXC_LOOP_DRY CODEXC_LOOP_IDLE CODEXC_IDLE_PARK CODEXC_LOOP_ROLLOUT CODEXC_GATE_TIMEOUT CODEXC_GATE_RETRIES CODEXC_REVIEW_CMD CODEXC_REVIEW_PASS CODEXC_REVIEW_ROUNDS CODEXC_REVIEW_PARSE_RETRIES CODEXC_REVIEW_TIMEOUT CODEXC_BANNER CODEXC_PROMPT_ROTATION CODEXC_REQUIRE_GATE CODEXC_NIGHT_IDLE CODEXC_NIGHT_WINDOW CODEXC_NIGHT_TZ CODEXC_ACTIVE_WINDOW CODEXC_ACTIVE_TZ PI_DIR OPENCODE_DATA_DIR; do
+for setting in CODEXC_NOTIFY CODEXC_NOTIFY_SECS CODEXC_NOTIFY_GAP CODEXC_LOOP_NOTIFY CODEXC_LOOP_POLL CODEXC_LOOP_STALL CODEXC_TURN_TIMEOUT CODEXC_LOOP_DRY CODEXC_LOOP_IDLE CODEXC_IDLE_PARK CODEXC_LOOP_ROLLOUT CODEXC_GATE_TIMEOUT CODEXC_GATE_RETRIES CODEXC_REVIEW_CMD CODEXC_REVIEW_PASS CODEXC_REVIEW_ROUNDS CODEXC_REVIEW_PARSE_RETRIES CODEXC_REVIEW_TIMEOUT CODEXC_PROVIDER_RECOVERY CODEXC_PROVIDER_MAX_RESTARTS CODEXC_PROVIDER_POLL CODEXC_BANNER CODEXC_PROMPT_ROTATION CODEXC_REQUIRE_GATE CODEXC_NIGHT_IDLE CODEXC_NIGHT_WINDOW CODEXC_NIGHT_TZ CODEXC_ACTIVE_WINDOW CODEXC_ACTIVE_TZ PI_DIR PI_CODING_AGENT_DIR XDG_CONFIG_HOME XDG_DATA_HOME OPENCODE_CONFIG OPENCODE_CONFIG_CONTENT OPENCODE_DATA_DIR CLAUDE_CONFIG_DIR; do
     if declare -p "$setting" >/dev/null 2>&1; then
         inner="$inner $setting=$(printf '%q' "${!setting}")"
     fi

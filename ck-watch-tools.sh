@@ -1,6 +1,14 @@
 #!/bin/bash
 # Tool-specific watchdogs. Sourced by codexc; never launches a worker or a runner.
 # Snapshot protocol: state<TAB>event identity<TAB>base64(final/error text).
+# Provider errors are published for the foreground supervisor. The watcher
+# never kills a tool or chooses a replacement provider itself.
+ck_provider_event() {  # pane owner source event state [error text]
+    [ -n "${CK_PROVIDER_GENERATION:-}" ] || return 0
+    printf '%s' "${6:-}" | python3 "$SCRIPT_DIR/ck-tool-supervisor.py" record \
+        "$CODEXC_TOOL" "$1" "$2" "$3" "$4" "$5"
+}
+
 ck_tool_snapshot() {
     python3 - "$1" "$2" "${OPENCODE_DIR:-}" <<'PY'
 import base64, hashlib, json, os, sqlite3, sys
@@ -127,7 +135,10 @@ watch_and_run_tool() (  # subshell keeps the loop library's globals private
         [ -n "$rollout" ] || continue
         now=$(date +%s)
         if pane_busy "$pane"; then
-            if [ "$active" = "0" ]; then active=1; started="$now"; heartbeat=0; fi
+            if [ "$active" = "0" ]; then
+                ck_provider_event "$pane" "$follow_pid" "$rollout" "$now-busy" clear || true
+                active=1; started="$now"; heartbeat=0
+            fi
             if [ $((now - heartbeat)) -ge 30 ] && declare -F write_status >/dev/null; then
                 write_status "执行中" 1 "$started"
                 heartbeat="$now"
@@ -143,10 +154,14 @@ watch_and_run_tool() (  # subshell keeps the loop library's globals private
         fi
         last_path="$rollout"
         [ "$token" != "$last_token" ] || continue
-        [ "$state" != "none" ] || { last_token="$token"; continue; }
+        [ "$state" != "none" ] || {
+            ck_provider_event "$pane" "$follow_pid" "$rollout" "$token" clear || true
+            last_token="$token"; continue
+        }
         pane_busy "$pane" && continue
         error="$(python3 -c 'import base64,sys; print(base64.b64decode(sys.argv[1]).decode("utf-8","replace"))' "$payload")"
         if [ "$state" = "clean" ]; then
+            ck_provider_event "$pane" "$follow_pid" "$rollout" "$token" clean || true
             last_token="$token"
             if declare -F write_status >/dev/null; then write_status "$error" 0 "$started"; fi
             if [ "$root_notify" = "1" ] && [ "$started" -gt 0 ] && [ $((now - started)) -ge "$notify_secs" ]; then
@@ -155,6 +170,8 @@ watch_and_run_tool() (  # subshell keeps the loop library's globals private
             active=0; started=0
             continue
         fi
+        ck_provider_event "$pane" "$follow_pid" "$rollout" "$token" error "$error"
+        [ "$?" != 75 ] || { last_token="$token"; continue; }
         if printf '%s\n' "$error" | grep -Eiq -- "$BLOCK_RE"; then
             last_token="$token"
             log "quota/subscription limit; auto-continue suppressed"
@@ -174,6 +191,8 @@ watch_and_run_tool() (  # subshell keeps the loop library's globals private
         # Recheck ownership/liveness immediately before both keyboard writes.
         kill -0 "$follow_pid" 2>/dev/null && pane_alive "$pane" || break
         pane_busy "$pane" && continue
+        ck_provider_event "$pane" "$follow_pid" "$rollout" "$token" error "$error"
+        [ "$?" != 75 ] || { last_token="$token"; continue; }
         tmux send-keys -t "$pane" -l -- "$CODEXC_MESSAGE" || break
         sleep 0.4
         kill -0 "$follow_pid" 2>/dev/null && pane_alive "$pane" || break

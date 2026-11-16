@@ -16,6 +16,7 @@
 | `gate.sh` | 初始化与项目维护者 / runner | 必须核对真实项目命令和测试发现范围；占位文件不能提供验收证据 |
 | `runner.lock`、`runner.owner`、`loop.pid` | 共享 runner 锁 / runner 与观察端 | 核实 PID 身份、owner token 与锁占用；不要凭陈旧 PID 终止别的进程 |
 | `status.json` | `ck-common.sh` / CLI、桌面、watchdog | 是观察快照，结合心跳、owner 与真实进程核对；不能单独证明任务验收 |
+| `provider-<pane>.json`、`provider-supervisor-<pane>.json` | watcher / TUI supervisor | 原子事件绑定本次启动代际与 pane/owner/项目，只保存身份与配置指纹，不保存密钥或错误原文；旧代际不触发恢复，不能凭这些文件终止任意进程 |
 | `loop.halt` | 人工或失败停炉 / runner、watchdog | 人工 halt 优先于自动复燃；先解释原因，再解除并按通道需要重启 |
 | `quota-until` | headless 配额处理 / runner、watchdog | 持久化等待，不因服务重启清空；坏值须排障，不能视作已恢复额度 |
 | `zcode-session-id`、`zcode-session-id.retry` | ZCode 适配器 / 下一轮 | 主 ID 优先，失败保留可续接 ID；归属无法核验时停止，确需重建先同时备份两份 |

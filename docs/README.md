@@ -11,6 +11,7 @@
 | 理解整个 Agent harness | [Harness 契约](HARNESS.md)：输入、执行、验收、恢复及代码映射 |
 | 查队列、停炉、时段、quota 和桌面状态 | [运行手册](OPERATIONS.md) |
 | 查状态所有者、原子写和恢复边界 | [状态与恢复契约](STATE-CONTRACTS.md) |
+| 上游故障后切换 provider 并续接原会话 | [Provider 自动恢复](PROVIDER-RECOVERY.md) |
 | 报障与查残留会话 | [排障手册](triage-playbook.md)；先回到用户看到的界面 |
 | 选择工具或核对真实兼容范围 | [工具矩阵与凭证](TOOLS.md) |
 | 选择持续改进任务与领域包 | [改进燃料](FUEL.md) / [领域指南](FUEL-DOMAINS.md) |
