@@ -86,6 +86,29 @@ def row_exists(sid):
         return True
 
 
+def verify_directory(sid):
+    """A resumed CLI keeps its persisted cwd, even when --cwd is supplied."""
+    import sqlite3
+    db = session_db().resolve()
+    try:
+        with sqlite3.connect(db.as_uri() + '?mode=ro', uri=True, timeout=5) as conn:
+            row = conn.execute('SELECT directory, path FROM session WHERE id=?', (sid,)).fetchone()
+    except sqlite3.Error as error:
+        raise ValueError('cannot verify stored ZCode session directory; '
+                         'session preserved, restore the session database before resuming') from error
+    # A deleted row cannot route to another project's live conversation. Let
+    # the CLI report the missing session and the existing heal path clear it.
+    if row is None:
+        return
+    for directory in (row[0], row[1] if row[1] is not None else row[0]):
+        if not isinstance(directory, str) or not Path(directory).is_absolute():
+            raise ValueError('invalid stored ZCode session directory; session preserved')
+        if Path(directory).resolve() != Path.cwd().resolve():
+            raise ValueError('stored ZCode session directory ' + repr(directory)
+                             + ' differs from current project ' + repr(str(Path.cwd()))
+                             + '; session preserved, migrate the session before resuming')
+
+
 def heal(path, sid):
     # resume 目标行已被清理 (废弃链清扫) 时旧链不可续: 删 sid 文件,
     # 让下一轮以全新会话起步, 不在死链上无限失败
@@ -257,7 +280,10 @@ def main():
         os.execvpe(args[0], args, cli_environment(session))
     path = Path(session)
     if action == 'select':
-        print(saved(path) or saved(Path(session + '.retry')), end='')
+        sid = saved(path) or saved(Path(session + '.retry'))
+        if sid:
+            verify_directory(sid)
+        print(sid, end='')
         return 0
     if action == 'capture':
         out, err, resumed, *command = args

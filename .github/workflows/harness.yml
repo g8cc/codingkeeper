@@ -1,0 +1,54 @@
+name: Offline harness
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: harness-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  offline:
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install offline test prerequisites
+        run: brew install tmux
+      - name: Run full isolated suite
+        shell: bash
+        run: tests/run-all --profile full --keep-artifacts --report .codingkeeper/ci-report.json
+      - name: Collect harness evidence
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          import shutil
+          report = Path('.codingkeeper/ci-report.json')
+          if report.is_file():
+              artifacts = Path(json.loads(report.read_text())['artifacts'])
+              if artifacts.is_dir():
+                  shutil.copytree(
+                      artifacts, '.codingkeeper/ci-artifacts', dirs_exist_ok=True,
+                      ignore=shutil.ignore_patterns('swift-cache', 'clang-cache', '__pycache__'))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: offline-harness-${{ github.run_id }}
+          path: |
+            .codingkeeper/ci-report.json
+            .codingkeeper/ci-artifacts/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7

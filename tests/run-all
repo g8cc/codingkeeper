@@ -3,19 +3,26 @@
 # 用法: tests/run-all [stage...]   无参 = 全部阶段；可传阶段名子集。
 set -u
 self_dir="$(cd "$(dirname "$0")/.." && pwd)"
-if [ "${CK_TEST_ISOLATED:-0}" != "1" ]; then
-    exec python3 "$self_dir/tests/isolate.py" "$@"
+if [ "${CK_TEST_PLAN:-0}" != "1" ]; then
+    exec python3 "$self_dir/tests/harness.py" "$@"
 fi
 cd "$self_dir"
 PATH="$self_dir:$PATH"
 FAILED=0
 declare -a RESULTS
+CURRENT_STAGE=""
+python3 tests/harness.py __start "$@" || exit 1
 
 record_stage() {
-    local name="$1" file="$2" rc="$3"
+    local name="$1" file="$2" rc="$3" elapsed="$4" status
+    status="$(python3 tests/harness.py __record "$CURRENT_STAGE" "$name" "$file" "$rc" "$elapsed")" || { FAILED=1; status=report-error; }
     tail -3 "$file" | sed 's/^/  /'
     if [ "$rc" = "0" ]; then
-        RESULTS+=("PASS  $name")
+        case "$status" in
+            pass_with_skips) RESULTS+=("PASS WITH SKIPS  $name") ;;
+            report) RESULTS+=("REPORT  $name") ;;
+            *) RESULTS+=("PASS  $name") ;;
+        esac
     else
         RESULTS+=("FAIL  $name (exit $rc)")
         FAILED=1
@@ -28,14 +35,13 @@ record_stage() {
 stage() {
     local name="$1"; shift
     echo "════ [$name] ════"
-    local file rc
+    local file rc started=$SECONDS
     file="$CK_TEST_ARTIFACTS/$(printf '%s' "$name" | tr -cs 'A-Za-z0-9' '-').log"
     "$@" > "$file" 2>&1; rc=$?
-    record_stage "$name" "$file" "$rc"
+    record_stage "$name" "$file" "$rc" "$((SECONDS-started))"
 }
 
-stage_syntax() {
-    echo "════ [syntax] ════"
+syntax_checks() {
     local bad=0
     for f in ck codexc codexc-loop codexc-daily codexc-headless codexc-zcode-worker codexc-dsh-worker zcodec dshc burn-watch.sh ck-init-furnace ck-watchdog-alive.sh ck-common.sh ck-watch-tools.sh packaging/install-watchdog.sh install.sh sync-prefix2.sh tests/run-all tests/conformance.sh tests/keys.sh tests/swift-gate.sh; do
         bash -n "$f" 2>/dev/null || { echo "  ✗ $f"; bad=1; }
@@ -47,20 +53,23 @@ stage_syntax() {
     if [ -f desktop/CodingKeeperBar.swift ]; then
         tests/swift-gate.sh desktop/CodingKeeperBar.swift || { echo "  ✗ desktop/CodingKeeperBar.swift (swift parse)"; bad=1; }
     fi
-    [ "$bad" = "0" ] && { echo "  ok: Bash + Python + Swift"; RESULTS+=("PASS  syntax"); } || { RESULTS+=("FAIL  syntax"); FAILED=1; }
-    echo
+    [ "$bad" = "0" ]
 }
+stage_syntax() { stage syntax syntax_checks; }
 
 stage_unit() { stage "unit (loop)" ./codexc-loop selftest; stage "unit (headless)" ./codexc-headless selftest; }
 stage_audit() {
-    for suite in night-loop startup acceptance loop-daily edges desktop tool-watchers harness isolate-cleanup relocation install-deps init-parity notify-parity window zcode-window watch-window zcode-quota zcode-session session-hygiene park-revive quality-trend dsh-session leaf-runtime review-leaf leaves burn-runtime watchdog-deploy watchdog-install evidence-retention log-location product-fuel fuel-extension interaction swift-gate prompts status; do
+    local suite suites
+    suites="$(python3 tests/harness.py __audits)" || { FAILED=1; return 1; }
+    [ -n "$suites" ] || { echo "No audit suites discovered"; FAILED=1; return 1; }
+    for suite in $suites; do
         stage "audit $suite" python3 "tests/$suite-audit.py"
     done
 }
 stage_integration() {
     # Each tool harness owns its scratch cwd, fake services and uniquely named
     # tmux panes. Their independent scenarios can share the private test server.
-    local tool file i rc
+    local tool file i rc started=$SECONDS
     local pids=() labels=() files=()
     echo "════ [integration: four isolated tool worlds in parallel] ════"
     for tool in codex claude pi opencode; do
@@ -71,17 +80,19 @@ stage_integration() {
     for i in 0 1 2 3; do
         wait "${pids[$i]}"; rc=$?
         echo "════ [${labels[$i]}] ════"
-        record_stage "${labels[$i]}" "${files[$i]}" "$rc"
+        record_stage "${labels[$i]}" "${files[$i]}" "$rc" "$((SECONDS-started))"
     done
     stage "integration headless" ./codexc-headless selftest-integration
 }
 stage_faultinjection() { stage "faultinjection" ./codexc-loop selftest-faultinjection; }
 stage_conformance() { stage "conformance" ./tests/conformance.sh; }
-stage_keys() { stage "keys (报告性)" ./tests/keys.sh; }
-stage_watchdog() { stage "watchdog 自测" ./burn-watch.sh selftest; }
+stage_keys() { stage keys ./tests/keys.sh; }
+stage_watchdog() { stage watchdog ./burn-watch.sh selftest; }
+stage_docs() { stage docs python3 tests/docs-check.py; }
 
-STAGES="${*:-syntax watchdog unit audit integration faultinjection conformance keys}"
+STAGES="$*"
 for s in $STAGES; do
+    CURRENT_STAGE="$s"
     case "$s" in
         syntax) stage_syntax ;;
         watchdog) stage_watchdog ;;
@@ -90,6 +101,7 @@ for s in $STAGES; do
         integration) stage_integration ;;
         faultinjection) stage_faultinjection ;;
         conformance) stage_conformance ;;
+        docs) stage_docs ;;
         keys) stage_keys ;;
         *) echo "unknown stage: $s"; FAILED=1 ;;
     esac
@@ -98,5 +110,6 @@ done
 echo "════════════════════════"
 # ${VAR[@]+"${VAR[@]}"}: set -u 下空数组在 bash 3.2 会报 unbound variable
 printf '%s\n' ${RESULTS[@]+"${RESULTS[@]}"}
+python3 tests/harness.py __finish "$FAILED" || FAILED=1
 if [ "$FAILED" = "0" ]; then echo "ALL STAGES PASS"; exit 0; fi
 echo "FAILURES PRESENT"; exit 1

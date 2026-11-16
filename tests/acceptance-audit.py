@@ -204,6 +204,92 @@ runner_lock_acquire >/dev/null 2>&1
 [ "$?" -ne 0 ] && [ ! -e .codingkeeper/runner.owner ] && [ -e .codexc/queue.md ]
 """, lambda rc, out, err, w: rc == 0)
 
+run('transient repair worker failure is retried instead of parking', runner_stubs + '''
+CODEXC_REVIEW_PARALLEL=0
+CODEXC_REVIEW_PASS=1
+CODEXC_REVIEW_ROUNDS=3
+CODEXC_TURN_RETRIES=3
+# 修复回合的退避 sleep 放行 (首个), 验收后队列空转的等待 sleep 触发 halt 有界退出
+sleep() { local n; n=$(cat sleep-count 2>/dev/null || echo 0); echo $((n+1)) > sleep-count; [ "$n" -ge 1 ] && touch .codingkeeper/loop.halt; return 0; }
+headless_turn() { local n; n=$(cat worker-count 2>/dev/null || echo 0); echo $((n+1)) > worker-count; : > "$2"; if [ "$n" = 1 ]; then return 1; fi; printf 'TASK_RESULT: DONE\\n' > "$2"; }
+gate_run() { : > "$1"; return 0; }
+review_run() { local n; n=$(cat review-count 2>/dev/null || echo 0); echo $((n+1)) > review-count; : > "$2"; if [ "$n" = 0 ]; then printf 1; else printf 0; fi; }
+run_runner
+''', lambda rc, out, err, w: (w / '.codingkeeper/journal').exists()
+      and (not (w / '.codingkeeper/loop.halt').exists()
+           or not (w / '.codingkeeper/loop.halt').read_text().strip())
+      and (w / 'worker-count').read_text().strip() == '3')
+
+run('repair worker auth failure parks with auth class, not transient park', runner_stubs + '''
+CODEXC_REVIEW_PARALLEL=0
+CODEXC_REVIEW_PASS=1
+CODEXC_REVIEW_ROUNDS=3
+sleep() { :; }
+headless_turn() { local n; n=$(cat worker-count 2>/dev/null || echo 0); echo $((n+1)) > worker-count; : > "$2"; if [ "$n" = 0 ]; then printf 'TASK_RESULT: DONE\\n' > "$2"; else printf 'CK_ERROR_CLASS: auth\\n' > "$2"; return 1; fi; }
+gate_run() { : > "$1"; return 0; }
+review_run() { local n; n=$(cat review-count 2>/dev/null || echo 0); echo $((n+1)) > review-count; : > "$2"; if [ "$n" = 0 ]; then printf 1; else printf 0; fi; }
+run_runner
+''', lambda rc, out, err, w: (w / '.codingkeeper/loop.halt').exists()
+      and 'worker auth failure' in (w / '.codingkeeper/loop.halt').read_text()
+      and (w / 'worker-count').read_text().strip() == '2')
+
+run('repair worker persistent failure parks only after retry budget', runner_stubs + '''
+CODEXC_REVIEW_PARALLEL=0
+CODEXC_REVIEW_PASS=1
+CODEXC_REVIEW_ROUNDS=3
+CODEXC_TURN_RETRIES=3
+sleep() { :; }
+headless_turn() { local n; n=$(cat worker-count 2>/dev/null || echo 0); echo $((n+1)) > worker-count; : > "$2"; if [ "$n" = 0 ]; then printf 'TASK_RESULT: DONE\\n' > "$2"; else return 1; fi; }
+gate_run() { : > "$1"; return 0; }
+review_run() { : > "$2"; printf 1; }
+run_runner
+''', lambda rc, out, err, w: (w / '.codingkeeper/loop.halt').exists()
+      and 'review fix turn failed' in (w / '.codingkeeper/loop.halt').read_text()
+      and (w / 'worker-count').read_text().strip() == '4')
+
+
+run('repair worker BLOCKED stops without consuming retry budget', runner_stubs + '''
+CODEXC_REVIEW_PARALLEL=0
+CODEXC_REVIEW_PASS=1
+CODEXC_REVIEW_ROUNDS=3
+CODEXC_TURN_RETRIES=3
+sleep() { :; }
+headless_turn() { local n; n=$(cat worker-count 2>/dev/null || echo 0); echo $((n+1)) > worker-count; if [ "$n" = 0 ]; then printf 'TASK_RESULT: DONE\\n'; else printf 'TASK_RESULT: BLOCKED: needs a decision\\n'; fi > "$2"; }
+gate_run() { : > "$1"; return 0; }
+review_run() { : > "$2"; printf 1; }
+run_runner
+''', lambda rc, out, err, w: (w / 'worker-count').read_text().strip() == '2'
+      and 'review fix turn blocked' in (w / '.codingkeeper/loop.halt').read_text()
+      and not (w / '.codingkeeper/journal').exists())
+
+run('repair quota pause receives the original reset evidence', runner_stubs + '''
+CODEXC_REVIEW_PARALLEL=0
+CODEXC_REVIEW_PASS=1
+CODEXC_REVIEW_ROUNDS=3
+sleep() { :; }
+headless_turn() { local n; n=$(cat worker-count 2>/dev/null || echo 0); echo $((n+1)) > worker-count; if [ "$n" = 0 ]; then printf 'TASK_RESULT: DONE\\n' > "$2"; else printf 'CK_QUOTA_UNTIL: 1999999999\\nCK_ERROR_CLASS: quota\\n' > "$2"; return 1; fi; }
+headless_quota_pause() { [ -n "${1:-}" ] && cat "$1" > quota-evidence; touch .codingkeeper/loop.halt; }
+gate_run() { : > "$1"; return 0; }
+review_run() { : > "$2"; printf 1; }
+run_runner
+''', lambda rc, out, err, w: (w / 'quota-evidence').exists()
+      and 'CK_QUOTA_UNTIL: 1999999999' in (w / 'quota-evidence').read_text()
+      and (w / 'worker-count').read_text().strip() == '2'
+      and not (w / '.codingkeeper/journal').exists())
+
+run('repair classified rate limit keeps the current transient park policy', runner_stubs + '''
+CODEXC_REVIEW_PARALLEL=0
+CODEXC_REVIEW_PASS=1
+CODEXC_REVIEW_ROUNDS=3
+sleep() { :; }
+headless_turn() { local n; n=$(cat worker-count 2>/dev/null || echo 0); echo $((n+1)) > worker-count; if [ "$n" = 0 ]; then printf 'TASK_RESULT: DONE\\n' > "$2"; else printf 'CK_ERROR_CLASS: transient\\n' > "$2"; return 1; fi; }
+gate_run() { : > "$1"; return 0; }
+review_run() { : > "$2"; printf 1; }
+run_runner
+''', lambda rc, out, err, w: (w / 'worker-count').read_text().strip() == '2'
+      and 'transient worker failure' in (w / '.codingkeeper/loop.halt').read_text()
+      and not (w / '.codingkeeper/journal').exists())
+
 if FAILURES:
     print(f'ACCEPTANCE AUDIT FAILED ({len(FAILURES)})')
     raise SystemExit(1)

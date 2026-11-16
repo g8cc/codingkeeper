@@ -44,6 +44,18 @@ class SessionHygieneAudit(unittest.TestCase):
         self.assertIn(call, worker.split('CK_ERROR_CLASS: $cls')[0],
                       'rc!=0 failure path must heal before exit')
 
+    def test_zcode_resume_binds_the_saved_conversation_to_current_project(self):
+        source = self.read('ck-zcode-session.py')
+        select = source.split("if action == 'select':", 1)[1].split("if action == 'capture':", 1)[0]
+        self.assertIn('verify_directory(sid)', select,
+                      'a saved or retry session must be checked before the CLI can resume it')
+        check = source.split('def verify_directory(sid):', 1)[1].split('\n\ndef heal', 1)[0]
+        self.assertIn("SELECT directory, path FROM session", check)
+        self.assertIn("Path(directory).resolve() != Path.cwd().resolve()", check,
+                      'persisted executor cwd is part of the session ownership check')
+        self.assertIn("'?mode=ro'", check,
+                      'ownership verification must not mutate the session database')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run the harness with a private home and tmux socket, never the user's server."""
 import os
+import json
 from pathlib import Path
 import shlex
 import shutil
@@ -14,6 +15,11 @@ root = Path(__file__).resolve().parents[1]
 base = Path(tempfile.mkdtemp(prefix='ck-tests-', dir='/private/tmp'))
 print(f'Test artifacts: {base}', flush=True)
 env = {k:v for k,v in os.environ.items() if not k.startswith(('CODEXC_', 'CODEX_', 'TMUX', 'CK_TEST_'))}
+# Only the validated planner's controls cross the environment reset.
+for name in ('CK_TEST_PLAN', 'CK_TEST_SUITES', 'CK_TEST_KEEP_ARTIFACTS',
+             'CK_TEST_STRICT_SKIPS', 'CK_TEST_REPORT'):
+    if name in os.environ:
+        env[name] = os.environ[name]
 # Historical fake worlds are non-Git and use the single standing prompt.
 # Strict entry/default and rotation tests explicitly select production behavior.
 env.update(CK_TEST_ISOLATED='1', CK_TEST_ARTIFACTS=str(base), HOME=str(base/'home'), TMPDIR=str(base/'tmp')+'/',
@@ -60,18 +66,46 @@ finally:
         try: os.killpg(child.pid,signal.SIGKILL)
         except (ProcessLookupError, PermissionError): pass
         child.wait(timeout=3)
+    cleanup_errors = []
     try:
         subprocess.run([str(wrapper),'kill-server'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL, timeout=5)
     except subprocess.TimeoutExpired:
-        print('private tmux cleanup timed out after 5 seconds', file=sys.stderr)
+        cleanup_errors.append('private tmux cleanup timed out after 5 seconds')
         if code == 0: code = 1
     except OSError as error:
-        print('private tmux cleanup failed: ' + str(error), file=sys.stderr)
+        cleanup_errors.append('private tmux cleanup failed: ' + str(error))
         if code == 0: code = 1
+    for error in cleanup_errors:
+        print(error, file=sys.stderr)
+    # The runner report is provisional until process/socket cleanup completes.
+    report = Path(env.get('CK_TEST_REPORT') or str(base/'report.json'))
+    if report.exists():
+        try:
+            data = json.loads(report.read_text())
+            if data.get('status') == 'running' and code == 0:
+                code = 1
+            data.update(exit_code=code, cleanup_errors=cleanup_errors,
+                        cleanup_complete=not cleanup_errors)
+            if code:
+                data['status'] = 'cancelled' if code == 130 else 'failed'
+            fd, scratch = tempfile.mkstemp(prefix='.report-', dir=report.parent)
+            try:
+                with os.fdopen(fd, 'w') as output:
+                    json.dump(data, output, indent=2, ensure_ascii=False)
+                    output.write('\n')
+                    output.flush()
+                    os.fsync(output.fileno())
+                os.replace(scratch, report)
+            finally:
+                if os.path.exists(scratch): os.unlink(scratch)
+        except (OSError, ValueError) as error:
+            print('cannot finalize harness report: ' + str(error), file=sys.stderr)
+            if code == 0: code = 1
     # Green runs remove their scratch world; failed runs keep stage logs on
     # disk because run-all's failure report points at "full log:" paths inside.
-    if code == 0:
+    if code == 0 and env.get('CK_TEST_KEEP_ARTIFACTS') != '1':
         shutil.rmtree(base, ignore_errors=True)
     else:
-        print(f'test artifacts kept for triage: {base}', file=sys.stderr)
+        label = 'test artifacts kept' if code == 0 else 'test artifacts kept for triage'
+        print(f'{label}: {base}', file=sys.stderr)
 sys.exit(code)

@@ -1,13 +1,14 @@
 # CodingKeeper 本地目录迁移审计（2026-11-14）
 
 目标：本地源码目录从 `codexc` 改为 `codingKeeper`，产品名称统一为 CodingKeeper。
-适用范围是本地工作目录；GitHub 仓库仍为 `g8cc/codexc`，不推测远端仓库已经改名。
+本地目录迁移于 2026-11-14 开始；2026-11-15 GitHub 仓库也已重命名为 `g8cc/codingkeeper`。
+本机目录继续使用 `codingKeeper`，不因远端使用全小写而再次移动目录。
 
 ## 影响清单
 
 | 位置 | 影响 | 处理 |
 | --- | --- | --- |
-| 源码目录与当前会话 cwd | 现有 Agent、终端和历史会话仍可能使用旧路径 | 移动真实目录；旧位置仅保留指向 `codingKeeper` 的兼容软链接 |
+| 源码目录与当前会话 cwd | 现有 Agent、终端和历史会话仍可能使用旧路径 | 移动真实目录；迁移消费者后移除旧入口，避免产生独立副本 |
 | `~/.codex/bin` | 现有安装入口的绝对软链接会失效；新增共享 helper 尚未全部安装 | 按 `install.sh` 中的脚本清单重建入口；不覆盖目录，普通文件先备份 |
 | `~/.tmux.conf` | 本机配置软链接指向旧源码目录 | 原子重定向到新目录中的 `tmux.conf` |
 | `~/.codingkeeper/burn-watch.sh` | 辅助入口软链接指向旧目录 | 原子重定向；后台服务的稳定副本不受影响 |
@@ -19,9 +20,9 @@
 | README / AGENTS / 安装器说明 | 产品介绍和 clone 后的本地目录仍叫 codexc | 使用 CodingKeeper；clone 显式指定本地 `codingKeeper` 目录 |
 | launchd 三个作业 | 已使用 `~/.codingkeeper/bin` 的稳定可执行副本，无源码目录依赖 | 核对已加载参数；不因改目录重建服务或改变定时策略 |
 | 桌面面板 | 可执行文件位于稳定目录，项目名称来自登记表 | 登记表迁移后自然显示新目录名；不需要重新编译 |
-| Git 元数据与钩子 | 主仓库 `.git` 随目录移动；钩子为相对 `.githooks` | 保留提交历史、origin URL、main 分支和钩子设置 |
-| 历史 journal / evidence / 基准测量 / prepared 部署清单 | 旧路径是当时证据的一部分，改写会破坏审计含义或摘要 | 保留原文，由兼容软链接维持历史路径可访问性 |
-| 编码工具的历史会话、IDE 最近项目 | 可能继续保存旧 cwd | 保留会话原始内容；兼容软链接承接旧入口，新会话使用新真实目录 |
+| Git 元数据与钩子 | 主仓库 `.git` 随目录移动；钩子为相对 `.githooks` | 保留提交历史、main 分支和钩子设置；GitHub 改名后更新 origin 和本地 Git LFS URL 配置 |
+| 历史 journal / evidence / 基准测量 / prepared 部署清单 | 旧路径是当时证据的一部分，改写会破坏审计含义或摘要 | 保留历史原文；重新执行历史部署清单前必须重生成当前路径 |
+| 编码工具的历史会话、IDE 最近项目 | 可能继续保存旧 cwd | 保留消息内容，同步迁移执行目录、桌面索引和自动化；不能依赖外层 cwd 或旧路径软链接 |
 
 ## 已修复的迁移缺陷
 
@@ -40,6 +41,41 @@
 
 - `ck` 是多工具入口；`codexc`、`zcodec`、`dshc` 等已有命令保留。
 - `CODEXC_*` 配置、launchd label、`.codingkeeper` 状态目录与队列合同不随本地文件夹改名。
-- 兼容软链接不是第二份代码。删除它之前，应先结束所有使用旧 cwd 的会话，并确认不再需要旧证据中的绝对跳转。
+- 本机旧路径已于 2026-11-15 移除，没有保留兼容软链接；独立旧 clone 完整归档在本地审计备份中。
 - 本地迁移备份放在本轮临时审计目录；备份与运行状态不进入 Git 提交。
 - Swift 工具链探针若失败，门禁会明确报告 SKIP；不能把它描述为桌面类型检查通过。
+
+## GitHub 改名后的本地更新（2026-11-15）
+
+```bash
+cd /Users/wardonguo/Documents/work/code/AI/AIworkspace/codingKeeper
+git remote set-url origin https://github.com/g8cc/codingkeeper.git
+git remote -v
+git ls-remote --symref origin HEAD refs/heads/main
+```
+
+若 `.git/config` 中保存了按旧仓库地址分组的 Git LFS 配置，也需迁到新地址。
+该改动不需要重新 clone，不改变当前分支、历史或未提交文件。
+
+## ZCode 会话与自动化迁移（2026-11-15）
+
+本机已在数据库备份后完成以下迁移并读回校验：
+
+- CLI 数据库中 6 个会话的 `directory`、`path` 和路径派生 `project_id`，以及 11 条输入历史的项目 ID。
+- 桌面索引中 19 个任务、6 个项目根、活动自动化、121 条运行历史，以及创建命令缓存和分组派生索引。
+- 当前和备用设置中的最近项目、上次工作区与活动工作区。
+
+会话 ID、消息和运行结果保留。旧 clone 的唯一提交已保存在本地审计归档中；当前源码已接入经审计的修改。
+备份与读回记录位于 `~/.codingkeeper/audits/codexc-reappearance-2026-11-15/`。
+
+重新打开 ZCode 时选择真实 `codingKeeper` 目录；若应用仍显示旧项目，退出并重新打开应用以重新载入索引。
+已迁移的旧会话仍带有历史上下文，需要在下一次交互中明确通知 Agent：
+
+> 项目已迁移到 `/Users/wardonguo/Documents/work/code/AI/AIworkspace/codingKeeper`，
+> GitHub 已改为 `https://github.com/g8cc/codingkeeper.git`。请先执行 `pwd -P` 和
+> `git remote get-url origin`，重新读取 `AGENTS.md` 并检查 `git status`。
+> 若实际目录不符，先停止操作并报告，不要重建或 clone 旧 `codexc` 目录。
+> 当前存在其他 Agent 留下的未提交改动，请完整保留并审计后再继续。
+
+这是目录与仓库身份迁移；此前自动化记录的 provider 401 认证失败需要单独恢复凭证。
+当前记录仅证明数据库、设置和文件读回通过，尚未验证 ZCode 桌面 UI。

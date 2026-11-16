@@ -329,10 +329,13 @@ patrol_once() {
         if [ "$halted" = 1 ]; then
             halt_reason="$(head -c 200 "$d/.codingkeeper/loop.halt" 2>/dev/null)"
             case "$halt_reason" in
-                *"model quota exhausted"*)
+                *"model quota exhausted"*|*"provider quota error"*)
                     # 模型日额度 park: 额度按日重置 — 跨日后有界自动复燃 (1/日),
                     # 否则每晚额度刷新时整队睡死 (2026-11-11 实证 4 炉配额 park
-                    # 过夜)。套餐未激活/人工类 park 仍走 *) 人工分支。
+                    # 过夜)。生产者是 codexc-headless headless_quota_pause 的
+                    # "provider quota error without reset time" (worker 未给可信
+                    # 恢复时间; 有可信时间时 runner 等待不 park); 旧串保留匹配
+                    # 历史遗留 halt。套餐未激活/人工类 park 仍走 *) 人工分支。
                     # awk -v 与 前缀赋值 都会对值做转义 (\b→退格) — 键必须走 ENVIRON 字面传递
                     qcount="$(day="$DAY" key="配额复燃#$proj#" awk 'index($0, ENVIRON["day"] " ") == 1 && index($0, ENVIRON["key"]) { n++ } END { print n+0 }' "$ALERT" 2>/dev/null)"
                     qcount=${qcount:-0}

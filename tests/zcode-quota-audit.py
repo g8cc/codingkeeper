@@ -5,6 +5,7 @@ import datetime as dt
 import os
 from pathlib import Path
 import subprocess
+import sqlite3
 import tempfile
 import unittest
 
@@ -28,9 +29,13 @@ class ZcodeQuotaAudit(unittest.TestCase):
         self.session.write_text("sess_previous\n")
         self.out = self.root / "out"
         self.err = self.root / "err"
+        self.dbpath = self.root / 'session-db.sqlite'
+        with sqlite3.connect(self.dbpath) as conn:
+            conn.execute('CREATE TABLE session (id text primary key, directory text, path text)')
+            conn.execute('INSERT INTO session VALUES (?, ?, NULL)', ('sess_previous', str(self.root)))
         self.env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ["PATH"],
                         ZCODE_CJS=str(self.cjs), ZCODE_SESSION_FILE=str(self.session),
-                        ZCODE_SESSION_DB=str(self.root / 'absent-session-db.sqlite'),
+                        ZCODE_SESSION_DB=str(self.dbpath),
                         AUDIT_STDOUT=str(self.out), AUDIT_STDERR=str(self.err), TMPDIR=str(self.root))
 
     def tearDown(self):

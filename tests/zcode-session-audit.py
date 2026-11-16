@@ -52,15 +52,74 @@ class SessionAudit(unittest.TestCase):
     def args(self):
         return json.loads(self.call.read_text())
 
-    def seed_db(self, sids):
+    def seed_db(self, sids, directory=None):
         import sqlite3
         conn = sqlite3.connect(self.dbpath)
-        conn.execute('CREATE TABLE IF NOT EXISTS session (id text primary key)')
+        conn.execute('CREATE TABLE IF NOT EXISTS session (id text primary key, directory text, path text)')
         conn.execute('DELETE FROM session')
         for sid in sids:
-            conn.execute('INSERT INTO session VALUES (?)', (sid,))
+            conn.execute('INSERT INTO session VALUES (?, ?, NULL)', (sid, str(directory or self.root)))
         conn.commit()
         conn.close()
+
+    def test_foreign_project_session_stops_before_cli_without_losing_context(self):
+        other = self.root / 'other project'
+        other.mkdir()
+        self.seed_db([SID], other)
+        self.session.write_text(SID + '\n')
+        result = self.turn([dict(sessionId=SID, response='TASK_RESULT: DONE')])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.call.exists(), 'a foreign conversation must not receive this task')
+        self.assertEqual(self.session.read_text(), SID + '\n')
+        self.assertIn('directory', result.stderr)
+        self.assertIn(str(other), result.stderr)
+
+    def test_retry_session_is_also_bound_to_the_current_project(self):
+        other = self.root / 'old-controller'
+        self.seed_db([SID], other)
+        retry = Path(str(self.session) + '.retry')
+        retry.write_text(SID + '\n')
+        result = self.turn([dict(sessionId=SID, response='TASK_RESULT: DONE')])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.call.exists())
+        self.assertEqual(retry.read_text(), SID + '\n')
+        self.assertFalse(other.exists(), 'selection must not recreate the old project')
+
+    def test_resume_workspace_path_cannot_override_the_verified_directory(self):
+        import sqlite3
+        self.seed_db([SID])
+        other = self.root / 'persisted executor workspace'
+        with sqlite3.connect(self.dbpath) as conn:
+            conn.execute('UPDATE session SET path=? WHERE id=?', (str(other), SID))
+        self.session.write_text(SID + '\n')
+        result = self.turn([dict(sessionId=SID, response='TASK_RESULT: DONE')])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.call.exists())
+        self.assertEqual(self.session.read_text(), SID + '\n')
+
+    def test_project_name_prefix_does_not_prove_session_ownership(self):
+        self.seed_db([SID], str(self.root) + '-other')
+        self.session.write_text(SID + '\n')
+        result = self.turn([dict(sessionId=SID, response='TASK_RESULT: DONE')])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.call.exists())
+
+    def test_symlink_alias_of_the_same_project_can_resume(self):
+        alias = self.root / 'project alias'
+        alias.symlink_to(self.root, target_is_directory=True)
+        self.seed_db([SID], alias)
+        self.session.write_text(SID + '\n')
+        result = self.turn([dict(sessionId=SID, response='TASK_RESULT: DONE')])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.args()[self.args().index('--resume') + 1], SID)
+
+    def test_corrupt_database_stops_resume_and_preserves_the_session(self):
+        self.dbpath.write_bytes(b'not a sqlite database')
+        self.session.write_text(SID + '\n')
+        result = self.turn([dict(sessionId=SID, response='TASK_RESULT: DONE')])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.call.exists())
+        self.assertEqual(self.session.read_text(), SID + '\n')
 
     def test_failed_turn_keeps_chain_while_row_still_exists(self):
         self.seed_db([SID])
@@ -85,6 +144,7 @@ class SessionAudit(unittest.TestCase):
         result = self.turn([dict(sessionId=SID, response='TASK_RESULT: DONE')], rc=1, err='boom')
         self.assertNotEqual(result.returncode, 0)
         self.assertTrue(self.session.exists(), 'unreadable db must never clear a chain')
+        self.assertFalse(self.call.exists(), 'unverified resume must stop before a model call')
 
     def test_real_session_id_is_saved_and_resumed(self):
         result = self.turn([dict(sessionId=SID, response='TASK_RESULT: DONE')])
@@ -188,7 +248,8 @@ class SessionAudit(unittest.TestCase):
             os.killpg(process.pid, signal.SIGKILL)
             process.communicate(timeout=5)
         selected = subprocess.run(['python3', str(REPO / 'ck-zcode-session.py'),
-                                   'select', str(self.session)], text=True, capture_output=True)
+                                   'select', str(self.session)], env=self.env,
+                                  cwd=self.root, text=True, capture_output=True)
         self.assertEqual(selected.stdout, SID)
 
     def test_many_failures_allocate_one_session(self):

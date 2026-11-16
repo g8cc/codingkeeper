@@ -2,6 +2,8 @@
 
 CodingKeeper = 编码 Agent 的无人值守运行时。核心命题: **智能全部在 Agent 内，机械全部在 Keeper 内，且机械层零智能**（Bash/Python + tmux + 退出码），因此可审查、可测试、不会被上游 Agent 的快速迭代碾掉。
 
+整体合同与代码地图见 [HARNESS](HARNESS.md)，持久化与恢复见 [STATE-CONTRACTS](STATE-CONTRACTS.md)，开发与测试见 [CONTRIBUTING](../CONTRIBUTING.md)。其他指南从 [文档总览](README.md) 进入。
+
 ## 两条驱动通道
 
 | 通道 | 入口 | 驱动方式 | 适用 |
@@ -9,17 +11,18 @@ CodingKeeper = 编码 Agent 的无人值守运行时。核心命题: **智能全
 | TUI | `ck codex` / `ck claude` / `ck opencode` / `ck pi` | tmux 会话 + 按键投喂 + 屏幕特征判忙闲 + watcher 错误续命 | 有终端 TUI 的工具 |
 | headless | `ck zcode run` / `ck dsh run`（经 codexc-headless） | 每任务一次阻塞子进程（`CODEXC_HEADLESS_CMD`），stdin 进任务、stdout 出结论 | 只有程序化接口的工具 |
 
-两条通道的项目文件与验收管线**完全一致**，可互换。
+两条通道共用项目文件与验收语义，可以切换；回合发现与进程监督分别实现，必须分别回归。
 
 ## 共享验收管线（acceptance pipeline）
 
 ```
 queue.md(## ready) → 投喂 → worker 回合 → gate.sh(真实退出码)
-  → 独立审查(codex exec, 跨模型, 双零收敛) → journal → 队列勾选
+  → 独立审查(新上下文, 双零收敛) → 可恢复验收事务(queue / journal / receipt)
 ```
 
 - gate 失败: 输出回灌修复（上限 3）；审查出 bug: 回灌修复、收敛清零（上限 6 轮）。
 - 一切无法判定的情况 **park**（写 loop.halt + 系统通知），绝不带病续跑。
+- 独立上下文不保证使用不同模型；候选验证期间变动会拒绝验收，失败保留未提交工作。
 
 ## 设计不变量（改代码前必读）
 
@@ -28,8 +31,8 @@ queue.md(## ready) → 投喂 → worker 回合 → gate.sh(真实退出码)
 3. 完成事件一次性消费: 水位 + 活动门 + 新鲜度令牌三层防陈旧误收。
 4. 每层都有上限: 续命 30 / gate 3 / 审查 6 / 空转 2 遍燃料库 / 回合 3600s / 审查 1800s。
 5. 外环零智能: 不做任何"聪明"的推断，机械规则全部可测试。
-6. **keeper 自医必带回归锁**: 修 keeper 自身的 bug 必须附对应回归测试（selftest/conformance
-   相应套件），无测试不入库（pre-commit 强制）；测试不可达的层（真 TTY 交互/浏览器 API）
+6. **keeper 自医必带回归锁**: 修 keeper 自身的 bug 必须附对应回归测试（selftest/audit 等
+   相应套件），无测试不入库（pre-commit 运行全量回归）；测试不可达的层（真 TTY 交互/浏览器 API）
    列入人工冒烟清单并由控制器执行记录。看门狗 (burn-watch.sh) 入库受同一门禁管辖,
    修改部署铁律: 禁止原地覆盖运行中的脚本（Bash 增量读取）。先停止实例后修改，
    或在隔离副本验证后原子替换文件；旧进程保留旧 inode，待正常重启后使用新版本。

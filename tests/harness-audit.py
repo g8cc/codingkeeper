@@ -42,6 +42,9 @@ class HarnessCancellationTests(unittest.TestCase):
         fake_tmux.chmod(0o755)
         self.env = dict(os.environ, PATH=str(self.root / "bin") + ":" + os.environ["PATH"],
                         HARNESS_AUDIT_TMUX_LOG=str(self.tmux_log))
+        for name in list(self.env):
+            if name.startswith('CK_TEST_'):
+                del self.env[name]
         self.launcher = None
         self.process_group = None
         self.artifacts = None
@@ -123,6 +126,8 @@ class HarnessCancellationTests(unittest.TestCase):
         return self.process_group
 
     def cancel_and_check(self, extra_pid):
+        report = self.artifacts / 'report.json'
+        report.write_text(json.dumps({'status': 'running', 'results': []}))
         self.launcher.terminate()
         code = self.launcher.wait(timeout=12)
         self.assertEqual(code, 130, self.output_path.read_text(errors="replace"))
@@ -131,6 +136,12 @@ class HarnessCancellationTests(unittest.TestCase):
         self.assertTrue(self.tmux_log.exists(), "tmux cleanup was skipped")
         calls = [json.loads(line) for line in self.tmux_log.read_text().splitlines()]
         self.assertEqual(calls, [["-S", str(self.artifacts / "tmux.sock"), "kill-server"]])
+        final = json.loads(report.read_text())
+        self.assertEqual(final['status'], 'cancelled')
+        self.assertEqual(final['exit_code'], 130)
+        stalled = self.env.get('HARNESS_AUDIT_TMUX_STALL') == '1'
+        self.assertEqual(final['cleanup_complete'], not stalled)
+        self.assertEqual(bool(final['cleanup_errors']), stalled)
 
     def test_sigterm_cleans_runner_and_private_tmux(self):
         self.cancel_and_check(self.start(ignore_term_grandchild=False))
@@ -146,7 +157,9 @@ class HarnessCancellationTests(unittest.TestCase):
     def test_cleanup_timeout_cannot_turn_success_into_a_green_gate(self):
         self.env['HARNESS_AUDIT_TMUX_STALL'] = '1'
         runner = self.repo / 'tests/run-all'
-        runner.write_text('#!/bin/bash\nexit 0\n'); runner.chmod(0o755)
+        runner.write_text('#!/bin/bash\nprintf \'{"status":"passed","results":[]}\\n\' '
+                          '> "$CK_TEST_ARTIFACTS/report.json"\nexit 0\n')
+        runner.chmod(0o755)
         self.launcher = subprocess.Popen(
             [sys.executable, str(self.repo / 'tests/isolate.py')], env=self.env,
             stdin=subprocess.DEVNULL, stdout=self.output, stderr=subprocess.STDOUT)
@@ -155,6 +168,30 @@ class HarnessCancellationTests(unittest.TestCase):
         for line in self.output_path.read_text().splitlines():
             if line.startswith('Test artifacts: '):
                 self.artifacts = Path(line.split(': ', 1)[1])
+        final = json.loads((self.artifacts / 'report.json').read_text())
+        self.assertEqual(final['status'], 'failed')
+        self.assertEqual(final['exit_code'], 1)
+        self.assertFalse(final['cleanup_complete'])
+        self.assertIn('timed out', final['cleanup_errors'][0])
+
+    def test_explicit_keep_retains_success_and_completed_report(self):
+        self.env['CK_TEST_KEEP_ARTIFACTS'] = '1'
+        runner = self.repo / 'tests/run-all'
+        runner.write_text('#!/bin/bash\nprintf \'{"status":"passed","results":[]}\\n\' '
+                          '> "$CK_TEST_ARTIFACTS/report.json"\nexit 0\n')
+        runner.chmod(0o755)
+        self.launcher = subprocess.Popen(
+            [sys.executable, str(self.repo / 'tests/isolate.py')], env=self.env,
+            stdin=subprocess.DEVNULL, stdout=self.output, stderr=subprocess.STDOUT)
+        self.assertEqual(self.launcher.wait(timeout=12), 0)
+        for line in self.output_path.read_text().splitlines():
+            if line.startswith('Test artifacts: '):
+                self.artifacts = Path(line.split(': ', 1)[1])
+        self.assertTrue(self.artifacts.is_dir())
+        final = json.loads((self.artifacts / 'report.json').read_text())
+        self.assertEqual(final['status'], 'passed')
+        self.assertEqual(final['exit_code'], 0)
+        self.assertTrue(final['cleanup_complete'])
 
 
 class FixtureProcessIsolationTests(unittest.TestCase):

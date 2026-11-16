@@ -6,6 +6,7 @@ wrapper killed its process group and private tmux server but never removed its
 own mkdtemp directory.
 """
 import re
+import os
 import shutil
 import subprocess
 import sys
@@ -17,8 +18,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class IsolateCleanupAudit(unittest.TestCase):
     def run_isolate(self, *stage):
+        env = {key: value for key, value in os.environ.items() if not key.startswith('CK_TEST_')}
         return subprocess.run([sys.executable, str(ROOT / 'tests/isolate.py'), *stage],
-                              cwd=ROOT, text=True, capture_output=True, timeout=300)
+                              cwd=ROOT, env=env, text=True, capture_output=True, timeout=300)
 
     def artifacts_path(self, result):
         match = re.search(r'Test artifacts: (\S+)', result.stdout)

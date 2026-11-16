@@ -1,4 +1,6 @@
-# codexc 处理逻辑手册（遇到什么情况，怎么处理）
+# CodingKeeper 处理逻辑手册（遇到什么情况，怎么处理）
+
+相关入口：[文档总览](README.md) · [Harness 契约](HARNESS.md) · [状态恢复](STATE-CONTRACTS.md) · [测试指南](../tests/README.md) · [发布流程](RELEASE.md)。本页是当前操作说明；带日期审计的结果仅代表对应现场。
 
 > 面向使用者与维护者的完整行为手册。架构: **CodingKeeper** —— 编码 Agent 的无人值守运行时，
 > 两条驱动通道（TUI 投喂 / headless 子进程）共享同一套验收管线。
@@ -111,9 +113,10 @@ idle(队列取任务) ──投喂──▶ task(work → gate → review) ─�
 |---|---|
 | worker 回合超时（`CODEXC_HEADLESS_TIMEOUT`=3600s） | 整树 kill → 失败计数，连续 `CODEXC_TURN_RETRIES`(3) 次 park |
 | worker 空输出（认证失效等） | 失败计数，连续 3 次 park + 通知（日志含输出尾迹） |
-| 会话连续性 | zcode: sessionId 存 `.codingkeeper/zcode-session-id` 每轮 `--resume`；dsh: `.codingkeeper/dsh-session-id`（从本次 --json session 事件原子保存，每轮 --session-id；失败/超时保留） |
+| 会话连续性 | zcode: sessionId 存 `.codingkeeper/zcode-session-id` 每轮 `--resume`；resume 前校验 CLI 数据库里的 `directory` 与 `path` 都解析到当前项目；跨项目/无法核验时先停 worker 并保留 ID；dsh: `.codingkeeper/dsh-session-id`（从本次 --json session 事件原子保存，每轮 --session-id；失败/超时保留） |
 | zcode 首次失败/空响应/超时 | stream-json 的 `turn.started` 提前将 `sess_...` 保存至 `.codingkeeper/zcode-session-id.retry`，下一轮续接；成功后提升为主会话并移除 retry。已有主会话始终优先，失败不覆盖有效上下文 |
 | zcode 本地 ID 损坏/恢复 ID 突变 | 报错并阻止继续建会话。新建上下文前同时备份并移走 `zcode-session-id` 和 `zcode-session-id.retry`；手动 halt 不受此机制影响 |
+| 项目目录改名/迁移 | 不能只改 `.codingkeeper/zcode-session-id` 所在的新仓库：ZCode resume 仍会载入旧会话的持久化 cwd。须在 CLI DB 和侧栏 tasks-index 同步迁移 workspace、session 与 automation 引用，并做备份；在两处 `directory/path` 指向新目录前，worker 会 fail closed，不会把新项目任务发给旧仓库 |
 | dsh 会话恢复失败 | 保留已保存 ID 并明确报错，不静默新建上下文；dsh 自身校验持久化历史、项目目录及 profile。确需重建时先备份并移走 `dsh-session-id`。适配器不再依赖 DSH_DIR/zstd 查找目录，数据位置由 dsh 自身配置决定 |
 | zcode 升级后 | 重跑 `codexc-headless selftest-integration` + 一次冒烟（文档声明过版本间行为差异） |
 

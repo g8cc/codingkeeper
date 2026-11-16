@@ -12,7 +12,9 @@
 
 > 仅支持 macOS（依赖 launchd、osascript、BSD 工具链）。
 
-本地源码目录使用 `codingKeeper`；GitHub 仓库地址、旧命令和 `CODEXC_*` 配置继续兼容。已有安装的路径迁移见[改名检查清单](docs/LOCAL-RENAME-2026-11-14.md)。
+GitHub 仓库使用 [`g8cc/codingkeeper`](https://github.com/g8cc/codingkeeper)，本地源码目录使用 `codingKeeper`；旧命令和 `CODEXC_*` 配置继续兼容。已有安装的路径迁移见[改名检查清单](docs/LOCAL-RENAME-2026-11-14.md)。
+
+[文档总览](docs/README.md) · [开发贡献](CONTRIBUTING.md) · [Harness 契约](docs/HARNESS.md) · [测试指南](tests/README.md)
 
 ## 环境要求
 
@@ -23,7 +25,7 @@
 ## 快速开始
 
 ```bash
-git clone https://github.com/g8cc/codexc.git codingKeeper
+git clone https://github.com/g8cc/codingkeeper.git codingKeeper
 cd codingKeeper
 ./install.sh            # 软链脚本到 ~/.codex/bin
 exec $SHELL             # ~/.codex/bin 尚不在 PATH 时重载
@@ -61,7 +63,7 @@ ck codex                # 选择 Codex 适配器；ck --help 查看其他工具
 | `codexc-daily pause` / `resume` | 暂停 / 恢复每日任务 |
 | `codexc-daily status` / `uninstall` | 查看状态 / 移除注册 |
 
-`zcodec run` / `ck zcode run` 默认 **工作日23:00–09:00、周末全天可运行，并持续投喂改进燃料**。`CODEXC_LOOP_IDLE=0` 改为只执行队列。需要覆盖时段时，设置 `CODEXC_ACTIVE_WINDOW=23:00-09:00`、`CODEXC_ACTIVE_TZ=Asia/Shanghai`；截止会停止 headless worker、gate 和 reviewer 的受管进程组。无效配置停止执行，人工 `loop.halt` 优先，配额等待跨重启保留。未配置时段时，额度耗尽会停炉等待人工恢复，不推测重置时间。
+`zcodec run` / `ck zcode run` 默认 **工作日23:00–09:00、周末全天可运行，并持续投喂改进燃料**。`CODEXC_LOOP_IDLE=0` 改为只执行队列。需要覆盖时段时，设置 `CODEXC_ACTIVE_WINDOW=23:00-09:00`、`CODEXC_ACTIVE_TZ=Asia/Shanghai`；截止会停止 headless worker、gate 和 reviewer 的受管进程组。无效配置停止执行，人工 `loop.halt` 优先，配额等待跨重启保留。额度耗尽且 worker 未给可信恢复时间时会停炉留档，看门狗跨日额度刷新后自动复燃（1/日），不推测重置时间。
 
 
 ### 会话命名规则
@@ -171,7 +173,9 @@ ck codex loop             # Codex TUI 监督循环
 
 ## 审计与验证
 
-`tests/run-all` 运行隔离离线套件，使用私有 home/tmux socket 与假 worker/reviewer，不发送模型请求。修复清单、证据和验证边界见 [2026-11-05 深度审计](docs/AUDIT-2026-11-05.md)。
+`tests/run-all` 运行完整隔离离线套件，使用私有 home/tmux socket 与假 worker/reviewer，不发送模型请求。`--list` 查看自动发现的审计，`--profile quick` 用于开发反馈，`--suite <name>` 选择目标审计；pre-commit 固定运行完整 profile。环境、CI 与覆盖边界见 [测试指南](tests/README.md)。
+
+`tests/run-all --keep-artifacts --report /private/tmp/ck-report.json` 保留成功日志和原子 JSON 报告；失败自动保留日志，成功默认回收私有世界。报告区分普通通过和覆盖跳过，`--strict-skips` 可拒绝已识别的 SKIP。历史证据与当前指南统一从 [文档总览](docs/README.md) 进入。
 
 重新接入会复用活跃 watcher；旧会话需重新启动以启用新版 watcher 和归属校验。定时发送只接受由本项目、本工具拥有的窗格，且不能与交付循环同时开启。
 
@@ -201,4 +205,4 @@ rm -f ~/Library/LaunchAgents/com.codexc.daily.plist
 
 95 项质量目录用于选择有证据、有价值的检查，不是必须逐项执行的待办。已有实现先验收；已有等价测试引用证据；无缺陷不制造提交；实机或浏览器依赖缺失时保留待验收。见 [本轮叶子审计](docs/LEAF-AUDIT-2026-11-05.md)。
 
-停炉自愈（2026-11-12 起）: 看门狗每 5 分钟巡逻，活炉低于 `CODEXC_FLEET_MAX`（默认 6）自动从备池复燃补足；"model quota exhausted" 的 park 在跨日额度刷新后有界自动复燃（1/日）；看门狗中断超过 20 分钟后的下一次启动会向告警账本留档死亡窗口（`burn-ALERTS.txt`）；夜间巡检每 30 分钟检查看门狗生死并按上述规则补炉（留痕 `~/.codingkeeper/overnight-watch.log`）。`worker auth failure` 与完整性类 park 仍等待人工处理。
+停炉自愈（2026-11-12 起）: 看门狗每 5 分钟巡逻，活炉低于 `CODEXC_FLEET_MAX`（默认 6）自动从备池复燃补足；无可信恢复时间的配额 park（`provider quota error without reset time`）在跨日额度刷新后有界自动复燃（1/日）；看门狗中断超过 20 分钟后的下一次启动会向告警账本留档死亡窗口（`burn-ALERTS.txt`）；夜间巡检每 30 分钟检查看门狗生死并按上述规则补炉（留痕 `~/.codingkeeper/overnight-watch.log`）。`worker auth failure` 与完整性类 park 仍等待人工处理。

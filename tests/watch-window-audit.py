@@ -444,6 +444,24 @@ class WatchWindowAudit(unittest.TestCase):
                          "预算 1/日: 同日第二次配额 park 不得再复燃")
 
 
+    def test_provider_quota_park_without_reset_time_auto_resumes_once_per_day(self):
+        # 2026-11-15 审查发现: 配额 park 的生产者已是 "provider quota error
+        # without reset time" (codexc-headless headless_quota_pause), 看门狗若仍
+        # 只匹配旧串 "model quota exhausted" (无任何生产者) 则跨日自愈失效,
+        # 真实配额 park 全部落入人工分支整夜睡死。
+        furnace = self.scaffold(self.project("quota-furnace-provider"))
+        (self.root / ".codingkeeper/projects").write_text(str(furnace.parent) + "\n")
+        self.clock.write_text(str(epoch("2026-11-05T23:00:00")))
+        launches = self.root / "launches"
+        (furnace / "loop.halt").write_text("provider quota error without reset time\n")
+        self.run_lib_shell("patrol_once\n")
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not launches.exists():
+            time.sleep(0.05)
+        self.assertEqual(len(launches.read_text().splitlines()) if launches.exists() else 0, 1,
+                         "现役配额 park 类 (provider quota error) 跨日应自动复燃一次")
+        self.assertFalse((furnace / "loop.halt").exists(), "复燃后 halt 应清除")
+
     def test_automatic_park_recovery_preserves_halt_outside_window(self):
         halt = self.projects / 'fingerprint/.codingkeeper/loop.halt'
         self.clock.write_text(str(epoch('2026-11-06T09:00:00')))

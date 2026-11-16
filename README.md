@@ -10,7 +10,9 @@ The original `codexc` command remains the Codex adapter. It wraps `codex` in a p
 
 > macOS-only (uses launchd, osascript, BSD tools). Chinese docs: [README.zh-CN.md](README.zh-CN.md)
 
-The local source directory is named `codingKeeper`; the existing GitHub repository URL, legacy commands and `CODEXC_*` settings remain compatible. For moving an existing installation, see [the relocation checklist](docs/LOCAL-RENAME-2026-11-14.md).
+The GitHub repository is [`g8cc/codingkeeper`](https://github.com/g8cc/codingkeeper), and the local source directory is named `codingKeeper`. Legacy commands and `CODEXC_*` settings remain compatible. For moving an existing installation, see [the relocation checklist](docs/LOCAL-RENAME-2026-11-14.md).
+
+[Documentation index](docs/README.md) · [Contributing](CONTRIBUTING.md) · [Agent harness](docs/HARNESS.md) · [Testing](tests/README.md)
 
 ## Requirements
 
@@ -21,7 +23,7 @@ The local source directory is named `codingKeeper`; the existing GitHub reposito
 ## Quick start
 
 ```bash
-git clone https://github.com/g8cc/codexc.git codingKeeper
+git clone https://github.com/g8cc/codingkeeper.git codingKeeper
 cd codingKeeper
 ./install.sh            # symlinks scripts into ~/.codex/bin
 exec $SHELL             # reload PATH if ~/.codex/bin is not on it yet
@@ -104,7 +106,7 @@ codexc-loop init     # explicit scaffold (same thing, for scripted setups)
 - `CODEXC_LOOP_DRY=1 codexc loop` — log every action without touching the TUI.
 - **Burn mode (default ON)**: rotate 44 general product, user experience, business and engineering recipes plus enabled domain packs when the queue is empty. Each recipe requires a demonstrated gap, a small change and real verification. Two complete sweeps without source changes enter inactive `waiting_fuel` (88 no-op turns with the general catalog; the active recipe count sets the threshold); exhausted fuel is reconsidered hourly or immediately when source or recipes change. `CODEXC_LOOP_IDLE=0` disables burn; custom text replaces the recipe rotation. `CODEXC_IDLE_PARK` controls the number of empty sweeps, or empty turns for a custom prompt; `CODEXC_PROMPT_ROTATION=0` restores the single standing prompt. The desktop panel consumes runner status and heartbeat snapshots.
 - Tool notes: `codexc-daily` cold-starts codex sessions only. Claude's watcher keys off session JSONL (`isApiErrorMessage`, post-retry-exhaustion); pi's off `stopReason: "error"`; opencode's off errored assistant rows in `opencode.db`. Reviews run in independent Codex contexts; the underlying model may be the same as the worker. Tools without a terminal TUI run on the **headless lane** instead: `codexc-headless` runs one blocking subprocess per task with the same queue/gate/review/burn semantics. `ck zcode run` is the bridge to ZCode's CLI this way; `dsh --profile headless` works the same once its credentials are configured (`CODEXC_HEADLESS_CMD="dsh --profile headless --session-id night -" codexc-headless run`).
-- **Overnight self-heal (since 2026-11-12)**: the watchdog patrols every 5 minutes and revives furnaces up to `CODEXC_FLEET_MAX` (default 6); "model quota exhausted" parks auto-resume once per day after the daily quota resets; a watchdog start after >20 minutes of silence logs the death gap into the alert ledger; the overnight watch checks watchdog liveness and refills furnaces every 30 minutes (trace: `~/.codingkeeper/overnight-watch.log`). `worker auth failure` parks still wait for a human.
+- **Overnight self-heal (since 2026-11-12)**: the watchdog patrols every 5 minutes and revives furnaces up to `CODEXC_FLEET_MAX` (default 6); quota parks without a trusted reset time (the worker wait path handles parks with one) auto-resume once per day after the daily quota resets; a watchdog start after >20 minutes of silence logs the death gap into the alert ledger; the overnight watch checks watchdog liveness and refills furnaces every 30 minutes (trace: `~/.codingkeeper/overnight-watch.log`). `worker auth failure` parks still wait for a human.
 
 ## Improvement fuel
 
@@ -173,7 +175,9 @@ The config also makes tmux distinguish `Shift+Enter` from `Enter` (newline vs se
 
 ## Audit and verification
 
-Run `tests/run-all` for the isolated offline suite (private home and tmux socket, fake workers/reviewers, no model requests). See the [2026-11-05 audit](docs/AUDIT-2026-11-05.md) for fixes, evidence and compatibility limits.
+Run `tests/run-all` for the full isolated offline suite (private home and tmux socket, fake workers/reviewers, no model requests). `--list` shows the discovered audits; `--profile quick` gives development feedback; `--suite <name>` selects an audit. The pre-commit hook runs the full profile. See the [test guide](tests/README.md) for setup, CI and coverage boundaries.
+
+Use `tests/run-all --keep-artifacts --report /private/tmp/ck-report.json` to retain successful logs and an atomic JSON report. Failed runs retain logs automatically; successful runs normally remove their private world. Reports distinguish coverage skips from ordinary passes; `--strict-skips` rejects recognized skips. Historical evidence and current guides are linked in the [documentation index](docs/README.md).
 
 Live watchers are reused on reattach; restart a legacy session to activate the new watcher and ownership checks. Scheduled prompts require an owned pane and cannot be combined with the delivery loop.
 
