@@ -755,21 +755,53 @@ run_runner() {
             banner_set "🔧 gate 修复中 (第 $gate_rounds/$CODEXC_GATE_RETRIES 轮) — $task"
             log "gate failed (round $gate_rounds/$CODEXC_GATE_RETRIES) rc=$rc"
             prompt="[codexc-headless] gate 未通过(第 $gate_rounds 次): $(gate_tail "$gate_out") —— 请修复后以 TASK_RESULT: DONE 结尾"
-            headless_turn "$prompt" "$outfile"; rc=$?
-            [ "$rc" != 125 ] || continue
-            if [ "$rc" -ne 0 ] && grep -q '^CK_ERROR_CLASS: quota' "$outfile" 2>/dev/null; then
-                headless_quota_pause "$outfile"
-                continue
-            fi
-            if [ "$rc" -ne 0 ] && grep -q '^CK_ERROR_CLASS: transient' "$outfile" 2>/dev/null; then
-                park "gate 修复请求遭遇限流或暂时故障，任务保留并等待复试" "transient worker failure"
-                continue
-            fi
-            marker="$(result_marker "$outfile")"
-            if [ "$rc" -ne 0 ] || [ "$marker" != "DONE" ]; then
-                park "循环挂起: gate 修复回合未成功完成 — $task" "gate fix turn failed (rc=$rc marker=$marker)"
-                continue
-            fi
+            # Retry unclassified transport failures within this repair round.
+            # Preserve explicit auth/quota/transient and BLOCKED outcomes.
+            # 与审查修复回合同纪律: 单次 rc=1 曾直接 park 且该类无自愈匹配,
+            # 一次网络抖动就停炉 (2026-11-15 longimg-preview 同因实证)。
+            fix_streak=0
+            fix_stop=0
+            while [ "$fix_stop" -eq 0 ]; do
+                headless_turn "$prompt" "$outfile"; rc=$?
+                if [ "$rc" = 125 ]; then
+                    fix_stop=1
+                    break
+                fi
+                if [ "$rc" -ne 0 ] && grep -q '^CK_ERROR_CLASS: quota' "$outfile" 2>/dev/null; then
+                    headless_quota_pause "$outfile"
+                    fix_stop=1
+                    break
+                fi
+                if [ "$rc" -ne 0 ] && grep -q '^CK_ERROR_CLASS: auth' "$outfile" 2>/dev/null; then
+                    park "循环挂起: worker 凭证失效 (auth) — 请人工处理" "worker auth failure"
+                    fix_stop=1
+                    break
+                fi
+                if [ "$rc" -ne 0 ] && grep -q '^CK_ERROR_CLASS: transient' "$outfile" 2>/dev/null; then
+                    park "gate 修复请求遭遇限流或暂时故障，任务保留并等待复试" "transient worker failure"
+                    fix_stop=1
+                    break
+                fi
+                marker="$(result_marker "$outfile")"
+                if [ "$rc" -eq 0 ] && [ "$marker" = "DONE" ]; then
+                    break
+                fi
+                if [ "$rc" -eq 0 ] && [ "$marker" = "BLOCKED" ]; then
+                    park "循环挂起: gate 修复回合 worker 报告 BLOCKED — $task" "gate fix turn blocked"
+                    fix_stop=1
+                    break
+                fi
+                fix_streak=$((fix_streak + 1))
+                if [ "$fix_streak" -ge "$CODEXC_TURN_RETRIES" ]; then
+                    park "循环挂起: gate 修复回合连续 $fix_streak 次未成功完成 — $task" "gate fix turn failed (rc=$rc marker=$marker)"
+                    fix_stop=1
+                    break
+                fi
+                log "gate fix turn failed (rc=$rc marker=$marker) — 轮内重试 $fix_streak/$CODEXC_TURN_RETRIES"
+                headless_wait_status "修复回合失败，等待重试" backoff "$(( $(date +%s) + fix_streak * 5 ))"
+                sleep $((fix_streak * 5))
+            done
+            [ "$fix_stop" -eq 0 ] || continue
             leaf_gate_run "$gate_out"; rc=$?
             [ "$rc" != 125 ] || continue
             if [ "$rc" = 126 ]; then

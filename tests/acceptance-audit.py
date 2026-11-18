@@ -290,6 +290,50 @@ run_runner
       and 'transient worker failure' in (w / '.codingkeeper/loop.halt').read_text()
       and not (w / '.codingkeeper/journal').exists())
 
+run('gate repair transient failure is retried instead of parking', runner_stubs + '''
+CODEXC_REVIEW_PARALLEL=0
+CODEXC_REVIEW_PASS=1
+CODEXC_REVIEW_ROUNDS=3
+CODEXC_TURN_RETRIES=3
+# 修复回合的退避 sleep 放行 (首个), 验收后队列空转的等待 sleep 触发 halt 有界退出
+sleep() { local n; n=$(cat sleep-count 2>/dev/null || echo 0); echo $((n+1)) > sleep-count; [ "$n" -ge 1 ] && touch .codingkeeper/loop.halt; return 0; }
+headless_turn() { local n; n=$(cat worker-count 2>/dev/null || echo 0); echo $((n+1)) > worker-count; : > "$2"; if [ "$n" = 1 ]; then return 1; fi; printf 'TASK_RESULT: DONE\\n' > "$2"; }
+gate_run() { local n; n=$(cat gate-count 2>/dev/null || echo 0); echo $((n+1)) > gate-count; : > "$1"; [ "$n" = 0 ] && return 1; return 0; }
+review_run() { : > "$2"; printf 0; }
+run_runner
+''', lambda rc, out, err, w: (w / '.codingkeeper/journal').exists()
+      and (not (w / '.codingkeeper/loop.halt').exists()
+           or not (w / '.codingkeeper/loop.halt').read_text().strip())
+      and (w / 'worker-count').read_text().strip() == '3')
+
+run('gate repair auth failure parks with auth class, not gate fix turn park', runner_stubs + '''
+CODEXC_REVIEW_PARALLEL=0
+CODEXC_REVIEW_PASS=1
+CODEXC_REVIEW_ROUNDS=3
+sleep() { :; }
+headless_turn() { local n; n=$(cat worker-count 2>/dev/null || echo 0); echo $((n+1)) > worker-count; : > "$2"; if [ "$n" = 0 ]; then printf 'TASK_RESULT: DONE\\n' > "$2"; else printf 'CK_ERROR_CLASS: auth\\n' > "$2"; return 1; fi; }
+gate_run() { : > "$1"; return 1; }
+review_run() { : > "$2"; printf 0; }
+run_runner
+''', lambda rc, out, err, w: (w / '.codingkeeper/loop.halt').exists()
+      and 'worker auth failure' in (w / '.codingkeeper/loop.halt').read_text()
+      and (w / 'worker-count').read_text().strip() == '2')
+
+run('gate repair persistent failure parks only after retry budget', runner_stubs + '''
+CODEXC_REVIEW_PARALLEL=0
+CODEXC_REVIEW_PASS=1
+CODEXC_REVIEW_ROUNDS=3
+CODEXC_TURN_RETRIES=3
+sleep() { local n; n=$(cat sleep-count 2>/dev/null || echo 0); echo $((n+1)) > sleep-count; [ "$n" -ge 1 ] && touch .codingkeeper/loop.halt; return 0; }
+headless_turn() { local n; n=$(cat worker-count 2>/dev/null || echo 0); echo $((n+1)) > worker-count; : > "$2"; if [ "$n" = 0 ]; then printf 'TASK_RESULT: DONE\\n' > "$2"; else return 1; fi; }
+gate_run() { : > "$1"; return 1; }
+review_run() { : > "$2"; printf 0; }
+run_runner
+''', lambda rc, out, err, w: (w / '.codingkeeper/loop.halt').exists()
+      and (w / '.codingkeeper/parks.log').exists()
+      and 'gate fix turn failed' in (w / '.codingkeeper/parks.log').read_text()
+      and (w / 'worker-count').read_text().strip() == '4')
+
 if FAILURES:
     print(f'ACCEPTANCE AUDIT FAILED ({len(FAILURES)})')
     raise SystemExit(1)
