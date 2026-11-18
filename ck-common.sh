@@ -662,7 +662,12 @@ register_project() {
     local real
     real="$(pwd -P)" || return 1
     if [ "${CODEXC_REGISTER_TEMP:-0}" != "1" ]; then
-        case "$real/" in /tmp/*|/private/tmp/*|"${TMPDIR:-/tmp/}"*) return 0 ;; esac
+        # 不信任调用方可窄化的 TMPDIR: macOS 每用户临时根 (/var/folders) 与
+        # /var/tmp 一并拒绝 — 2026-11-17 事故实证 TMPDIR=/tmp 时 /var/folders
+        # 下的 world 被登记进真实舰队注册表, 告警刷屏 28 小时。
+        case "$real/" in
+            /tmp/*|/private/tmp/*|/var/tmp/*|/private/var/tmp/*|/var/folders/*|/private/var/folders/*|"${TMPDIR:-/tmp/}"*) return 0 ;;
+        esac
     fi
     python3 - "$HOME/.codingkeeper" "$real" <<'PYREGISTER'
 import fcntl, os, sys, tempfile

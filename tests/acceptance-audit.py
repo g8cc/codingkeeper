@@ -334,6 +334,23 @@ run_runner
       and 'gate fix turn failed' in (w / '.codingkeeper/parks.log').read_text()
       and (w / 'worker-count').read_text().strip() == '4')
 
+run('register_project refuses temp roots even when TMPDIR is narrowed', '''
+# 2026-11-17 事故实证: 调试进程把 TMPDIR 窄化为 /tmp 后, cwd 在 macOS 每用户
+# 临时根 (/var/folders/.../T) 下的 world 被 register_project 登记进真实舰队
+# 注册表 — 4 条残留 × 每巡逻 4 条 scaffold 告警刷屏 28 小时。守卫必须按系统
+# 临时根判定, 不信任调用方可窄化的 TMPDIR。
+mkdir -p home/.codingkeeper
+export HOME="$PWD/home"
+tmproot="$(mktemp -d)"
+world="$tmproot/probe"; mkdir -p "$world"; cd "$world"
+TMPDIR=/tmp register_project || exit 1
+[ ! -e "$OLDPWD/home/.codingkeeper/projects" ] || exit 1
+unset TMPDIR
+register_project || exit 1
+[ ! -e "$OLDPWD/home/.codingkeeper/projects" ] || exit 1
+echo guard-held
+''', lambda rc, out, err, w: rc == 0 and 'guard-held' in out)
+
 if FAILURES:
     print(f'ACCEPTANCE AUDIT FAILED ({len(FAILURES)})')
     raise SystemExit(1)
