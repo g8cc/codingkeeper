@@ -9,6 +9,16 @@ import time
 
 repo = Path(__file__).resolve().parent.parent
 source = (repo / 'desktop/CodingKeeperBar.swift').read_text().split('\nlet app = NSApplication.shared\n')[0]
+
+# 桌面栏 registry() 的临时根过滤必须与 ck-common register_project 守卫同步扩展
+# (2026-11-19 审查: shell 守卫扩到 /var/folders 后桌面栏漏跟 → 守卫拒收的残留
+# 条目仍被桌面栏当炉子显示, 两口径漂移)
+for _prefix in ('/tmp/', '/private/tmp/', '/var/tmp/', '/private/var/tmp/',
+                '/var/folders/', '/private/var/folders/'):
+    if f'"{_prefix}"' not in source:
+        raise SystemExit(f'DESKTOP ALIGNMENT FAIL: 桌面栏 tmpPrefixes 缺 {_prefix} — 与 shell 守卫漂移')
+    if f'{_prefix}*' not in (repo / 'ck-common.sh').read_text():
+        raise SystemExit(f'DESKTOP ALIGNMENT FAIL: shell 守卫缺 {_prefix}* — 桌面栏已支持而 shell 缺失')
 source += r'''
 let delegate = AppDelegate()
 func check(_ value: Bool, _ text: String) {

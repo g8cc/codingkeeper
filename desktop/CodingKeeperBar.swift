@@ -287,9 +287,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let reg = NSHomeDirectory() + "/.codingkeeper/projects"
         guard let data = boundedFile(reg, limit: 2 * 1024 * 1024),
               let s = String(data: data, encoding: .utf8) else { return [] }
-        // 与 ck-common register_project 的 /tmp 过滤对齐 (含 realpath 的 /private/tmp 与系统 TMPDIR);
+        // 与 ck-common register_project 的临时根过滤对齐 (含 realpath 的 /private/tmp、
+        // 系统 TMPDIR 与 macOS 每用户临时根 /var/folders — 守卫 2026-11-19 扩展后的六段模式);
         // 物理路径归一去重: 符号链接路径与真实路径指向同一目录时, status.json 会被读两次 → 计数翻倍
-        let tmpPrefixes = ["/tmp/", "/private/tmp/", NSTemporaryDirectory()]
+        let tmpPrefixes = ["/tmp/", "/private/tmp/", "/var/tmp/", "/private/var/tmp/",
+                           "/var/folders/", "/private/var/folders/", NSTemporaryDirectory()]
         var seen = Set<String>()
         var out: [String] = []
         for line in s.split(separator: "\n").map(String.init) {
