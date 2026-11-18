@@ -9,6 +9,8 @@ import tempfile
 import unittest
 
 REPO = Path(__file__).resolve().parent.parent
+os.environ['CODEXC_FLEET_TEMP_FILTER'] = '0'  # fixture 舰队建在临时根下 — 服务端过滤会让位
+
 
 
 class EdgesAudit(unittest.TestCase):

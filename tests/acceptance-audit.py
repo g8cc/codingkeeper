@@ -341,15 +341,18 @@ run('register_project refuses temp roots even when TMPDIR is narrowed', '''
 # 临时根判定, 不信任调用方可窄化的 TMPDIR。
 mkdir -p home/.codingkeeper
 export HOME="$PWD/home"
-tmproot="$(mktemp -d)"
-world="$tmproot/probe"; mkdir -p "$world"; cd "$world"
+# 探针根固定在 macOS 每用户临时根 — 门禁环境 (isolate) 会重定向 TMPDIR,
+# 用 mktemp 会让探针落进 /private/tmp (旧守卫已拒) → 测试恒过变空转
+tmproot="$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null || true)"
+case "$tmproot" in /var/folders/*) ;; *) echo skip-non-macos; exit 0 ;; esac
+world="$tmproot/probe-$$"; mkdir -p "$world"; cd "$world"
 TMPDIR=/tmp register_project || exit 1
 [ ! -e "$OLDPWD/home/.codingkeeper/projects" ] || exit 1
 unset TMPDIR
 register_project || exit 1
 [ ! -e "$OLDPWD/home/.codingkeeper/projects" ] || exit 1
 echo guard-held
-''', lambda rc, out, err, w: rc == 0 and 'guard-held' in out)
+''', lambda rc, out, err, w: rc == 0 and ('guard-held' in out or 'skip-non-macos' in out))
 
 if FAILURES:
     print(f'ACCEPTANCE AUDIT FAILED ({len(FAILURES)})')

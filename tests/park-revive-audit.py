@@ -9,6 +9,8 @@ from pathlib import Path
 
 # CK_AUDIT_SOURCE: 指向保存的旧源码目录, 用于回归重放 (先红后绿取证)
 REPO = Path(os.environ.get('CK_AUDIT_SOURCE', Path(__file__).resolve().parent.parent))
+os.environ['CODEXC_FLEET_TEMP_FILTER'] = '0'  # fixture 舰队建在临时根下 — 服务端过滤会让位
+
 
 
 class ParkReviveAudit(unittest.TestCase):

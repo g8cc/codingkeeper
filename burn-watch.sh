@@ -43,6 +43,15 @@ fleet_furnaces() {
         p="${p%/}"
         [ -d "$p" ] || continue
         case "$p" in *[[:space:]]*) continue ;; esac
+        # 服务端兜底: register_project 守卫 (2026-11-19 加固) 拒收的临时根条目
+        # 若因历史残留落进注册表, 巡逻静默跳过 — 不烧、不告警 (无限重复的
+        # scaffold 告警对无法自愈的死条目毫无意义)。旗标默认开; 测试装置
+        # (fixture 在临时根下) 用 CODEXC_FLEET_TEMP_FILTER=0 让位。
+        if [ "${CODEXC_FLEET_TEMP_FILTER:-1}" = "1" ]; then
+            case "$p/" in
+                /tmp/*|/private/tmp/*|/var/tmp/*|/private/var/tmp/*|/var/folders/*|/private/var/folders/*) continue ;;
+            esac
+        fi
         case " $FLEET_EXCLUDE " in *" ${p##*/} "*) continue ;; esac
         [ -f "$p/.codingkeeper/queue.md" ] || continue
         if [ ! -f "$p/.codingkeeper/gate.sh" ] || [ ! -f "$p/.codingkeeper/review-leaf.sh" ]; then

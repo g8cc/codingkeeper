@@ -8,6 +8,7 @@ import shlex
 import signal
 import subprocess
 import sys
+import shutil
 import tempfile
 import time
 import unittest
@@ -45,6 +46,7 @@ class WatchWindowAudit(unittest.TestCase):
         self.clock = self.root / "clock"
         self.clock.write_text(str(epoch("2026-11-05T23:00:00")))
         self.env = dict(os.environ, HOME=str(self.root), TMPDIR=str(self.root),
+                        CODEXC_FLEET_TEMP_FILTER="0",
                         PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
                         CODEXC_ACTIVE_WINDOW="23:00-09:00", CODEXC_ACTIVE_TZ="Asia/Shanghai",
                         BURN_WATCH_NOTIFY="0", WATCH_ROOT=str(self.root), WATCH_SOURCE=str(self.source),
@@ -315,6 +317,27 @@ class WatchWindowAudit(unittest.TestCase):
         self.assertIn("目录不存在", alerts, "死条目必须留档 — 静默跳过不可接受")
         self.assertIn("含空白", alerts, "空白路径条目必须留档")
         self.assertEqual(alerts.count("巡逻跳过"), 2, "两类跳过各留档一次 (按日去重)")
+
+    def test_temp_root_registry_entries_are_silently_skipped(self):
+        # 2026-11-17 事故兜底: register_project 守卫拒收的临时根条目若因历史
+        # 残留落进注册表, 巡逻必须静默跳过 — 不烧、不告警 (无法自愈的死条目
+        # 每巡逻重发 scaffold 告警 = 无限重复; 实证 28 小时刷屏 1187 行)
+        tmpdir = tempfile.mkdtemp(prefix='ck-tempentry-')
+        self.addCleanup(shutil.rmtree, tmpdir, ignore_errors=True)
+        real = os.path.realpath(tmpdir)
+        if not real.startswith(('/var/folders/', '/private/var/folders/', '/tmp/', '/private/tmp/')):
+            self.skipTest('非已知临时根平台')
+        entry = Path(real) / "temp-furnace"
+        (entry / ".codingkeeper").mkdir(parents=True)
+        (entry / ".codingkeeper/queue.md").write_text("## ready\n")
+        (self.root / ".codingkeeper/projects").write_text(str(entry) + "\n")
+        self.clock.write_text(str(epoch("2026-11-05T23:00:00")))
+        self.shell("CODEXC_FLEET_TEMP_FILTER=1 patrol_once\n")
+        # 静默跳过 = 零告警输出, ALERTS 可能根本不被创建 (缺失也是"无告警")
+        alerts = (self.root / ".codingkeeper/burn-ALERTS.txt")
+        self.assertTrue(not alerts.exists() or "temp-furnace" not in alerts.read_text(),
+                        "临时根条目必须静默跳过 — 告警即无限重复")
+        self.assertFalse((entry / ".codingkeeper/loop.halt").exists(), "临时条目不得被复燃")
 
     def test_patrol_alert_stream_carries_only_signals(self):
         # 可观测性: 例行输出不得进 ALERT — 活体取证 318 行里 198 行缺 journal 的
