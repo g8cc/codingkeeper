@@ -12,6 +12,8 @@ import os
 import plistlib
 import json
 import signal
+
+os.environ['CODEXC_FLEET_TEMP_FILTER'] = '0'  # fixture 舰队建在临时根下 — 服务端过滤会让位
 import sys
 import subprocess
 import tempfile
@@ -161,6 +163,29 @@ class WatchdogDeployAudit(unittest.TestCase):
         src = (ROOT / 'burn-watch.sh').read_text()
         self.assertIn('$WATCH_DIR/ck-window.py', src)
         self.assertIn('bw_repo_dir', src)
+
+    def test_furnace_gate_propagates_pytest_result(self):
+        project = self.world / 'python project'
+        project.mkdir()
+        env = dict(os.environ, HOME=str(self.home))
+        subprocess.run([str(ROOT / 'ck-init-furnace'), str(project)], env=env,
+                       capture_output=True, text=True, check=True, timeout=15)
+        (project / 'pytest.ini').touch()
+        (project / 'pytest.py').write_text(
+            'import os, sys\n'
+            'print(os.environ["CK_TEST_PYTEST_DIAGNOSTIC"], file=sys.stderr)\n'
+            'code = int(os.environ["CK_TEST_PYTEST_EXIT"])\n'
+            'raise SystemExit(0 if code == 1 and "--collect-only" in sys.argv else code)\n')
+        gate = project / '.codingkeeper' / 'gate.sh'
+        for code, diagnostic in ((2, 'collection error'), (5, 'no tests collected'),
+                                 (1, 'assertion failed'), (0, 'test passed')):
+            with self.subTest(code=code):
+                gate_env = dict(env, CK_TEST_PYTEST_EXIT=str(code), CK_TEST_PYTEST_DIAGNOSTIC=diagnostic)
+                result = subprocess.run([str(gate)], cwd=self.world, env=gate_env,
+                                        capture_output=True, text=True, timeout=15)
+                self.assertEqual(result.returncode, code, result.stdout + result.stderr)
+                self.assertIn(diagnostic, result.stderr)
+                self.assertEqual('[gate] OK' in result.stdout, code == 0)
 
     def test_ck_init_furnace_scaffolds_and_registers(self):
         """生成器: 三件套 + 注册登记, 幂等 (重跑不炸不重复登记)。"""

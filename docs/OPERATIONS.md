@@ -208,6 +208,7 @@ ZCode 的窗口不改变 `codexc-daily`（该入口仅负责 Codex）的调度�
 
 - `ck leaves --registry`：离线结构检查。错误返回非零，质量提示需要结合源码判断；不会跑 gate/worker。
 - `zcodec run`：默认轮换工程 Prompt 持续 burn；CODEXC_LOOP_IDLE=0 时空队列等待，占位 gate 直接挂起。正式 gate 的业务覆盖仍由项目维护者负责，不能从任意 shell 代码自动证明。
+- `ck-init-furnace` 生成的渐进式 gate 在项目根目录发现 `pyproject.toml`、`pytest.ini` 或 `setup.cfg` 时运行 `python3 -m pytest -q`。收集出错、零测试或断言失败都会阻止验收，gate 日志保留 pytest 的诊断。脚手架会保留已有 gate，如需修正旧模板，请在项目的 `.codingkeeper/gate.sh` 中将 `--collect-only` 条件块替换为直接运行测试的命令，并保留 `set -e`。
 - 续行必须缩进；待依赖的任务放 `## blocked`，已实现但缺验收的任务放 `## review-needed`。runner 不自动把依赖当完成。
 - `.codingkeeper/acceptance.pending.json` 是未提交完的验收事务。恢复会核对队列前/后内容并幂等补齐 journal/receipt；队列已被外部修改则停住供核对。不要随意删除它或手工勾选以绕过失败。
 - `.codingkeeper/evidence/<id>/` 保留任务基线、候选、输出与 receipt；blobs 按内容去重复用。内容 blob 上限 16 MiB/文件、128 MiB/快照；超限文件仍流式记录完整哈希和元数据，缺内容时明确省略文本 diff。50,000 路径上限仍会停止；不能静默忽略文件。已验收历史默认保留最近 50 份，活动/pending/未验收证据和 journal 保留，见 [改进燃料](FUEL.md)。
