@@ -915,8 +915,58 @@ run_runner() {
                 leaf_gate_run "$gate_out"; rc=$?
                 [ "$rc" != 125 ] || break
                 if [ "$rc" -ne 0 ]; then
-                    park "循环挂起: 审查修复后测试失败 — $task" "post-review fix gate failed (rc=$rc tail: $(gate_tail "$gate_out"))"
-                    break
+                    # 审查修复后 gate 复检失败: 与 gate 阶段同纪律 — 喂回有界
+                    # 修复回合而非单次即 park。曾直接 park 且该类无自愈匹配,
+                    # dsh/agentos 各因此停炉一次 (2026-11-19 实证)。
+                    gate_fix_streak=0
+                    gate_stop=0
+                    while [ "$gate_stop" -eq 0 ]; do
+                        log "post-review gate failed rc=$rc — 喂回修复回合 ($((gate_fix_streak + 1))/$CODEXC_GATE_RETRIES)"
+                        gate_prompt="[codexc-headless] 审查修复后 gate 未通过: $(gate_tail "$gate_out") —— 请修复后以 TASK_RESULT: DONE 结尾"
+                        headless_turn "$gate_prompt" "$outfile"; rc=$?
+                        if [ "$rc" = 125 ]; then
+                            gate_stop=1
+                            break
+                        fi
+                        if [ "$rc" -ne 0 ] && grep -q '^CK_ERROR_CLASS: quota' "$outfile" 2>/dev/null; then
+                            headless_quota_pause "$outfile"
+                            gate_stop=1
+                            break
+                        fi
+                        if [ "$rc" -ne 0 ] && grep -q '^CK_ERROR_CLASS: auth' "$outfile" 2>/dev/null; then
+                            park "循环挂起: worker 凭证失效 (auth) — 请人工处理" "worker auth failure"
+                            gate_stop=1
+                            break
+                        fi
+                        if [ "$rc" -ne 0 ] && grep -q '^CK_ERROR_CLASS: transient' "$outfile" 2>/dev/null; then
+                            park "gate 修复请求遭遇限流或暂时故障，任务保留并等待复试" "transient worker failure"
+                            gate_stop=1
+                            break
+                        fi
+                        marker="$(result_marker "$outfile")"
+                        if [ "$rc" -eq 0 ] && [ "$marker" = "DONE" ]; then
+                            leaf_gate_run "$gate_out"; rc=$?
+                            [ "$rc" != 125 ] || { gate_stop=1; break; }
+                            if [ "$rc" -eq 0 ]; then
+                                break
+                            fi
+                        fi
+                        if [ "$rc" -eq 0 ] && [ "$marker" = "BLOCKED" ]; then
+                            park "循环挂起: gate 修复回合 worker 报告 BLOCKED — $task" "gate fix turn blocked"
+                            gate_stop=1
+                            break
+                        fi
+                        gate_fix_streak=$((gate_fix_streak + 1))
+                        if [ "$gate_fix_streak" -ge "$CODEXC_GATE_RETRIES" ]; then
+                            park "循环挂起: 审查修复后 gate 连续 $gate_fix_streak 次未通过 — $task" "post-review fix gate failed (rc=$rc tail: $(gate_tail "$gate_out"))"
+                            gate_stop=1
+                            break
+                        fi
+                        log "post-review gate still failing rc=$rc — 轮内重试 $gate_fix_streak/$CODEXC_GATE_RETRIES"
+                        headless_wait_status "gate 修复回合失败，等待重试" backoff "$(( $(date +%s) + gate_fix_streak * 5 ))"
+                        sleep $((gate_fix_streak * 5))
+                    done
+                    [ "$gate_stop" -eq 0 ] || break
                 fi
                 continue
             fi
