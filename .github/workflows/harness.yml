@@ -34,13 +34,24 @@ jobs:
           import json
           from pathlib import Path
           import shutil
+          import stat
+
+          def ignore_runtime_entries(directory, names):
+              ignored = []
+              for name in names:
+                  mode = (Path(directory) / name).lstat().st_mode
+                  if (name in ('swift-cache', 'clang-cache', '__pycache__') or
+                          not (stat.S_ISREG(mode) or stat.S_ISDIR(mode))):
+                      ignored.append(name)
+              return ignored
+
           report = Path('.codingkeeper/ci-report.json')
           if report.is_file():
               artifacts = Path(json.loads(report.read_text())['artifacts'])
               if artifacts.is_dir():
                   shutil.copytree(
                       artifacts, '.codingkeeper/ci-artifacts', dirs_exist_ok=True,
-                      ignore=shutil.ignore_patterns('swift-cache', 'clang-cache', '__pycache__'))
+                      ignore=ignore_runtime_entries)
           PY
       - uses: actions/upload-artifact@v4
         if: always()

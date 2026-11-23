@@ -35,6 +35,12 @@ quick 用于迭代，full 是提交与发布前完整离线门禁；pre-commit �
 
 所有 `*-audit.py` 自动接入，无需追加硬编码名单。新增测试须核对清单中能发现它。可选 `native-startup-smoke.py` 和 `benchmark-status.py` 属于人工入口，清单单独列出，不纳入默认套件；前者会启动真实 Codex，后者比较指定版本性能。
 
+报告中的检查数量是顶层命令/汇总行数，不是测试用例数。例如 2026-11-23 的 full
+清单为 56 项：43 个 audit 套件、5 个 integration、2 个内嵌 unit，以及 syntax、
+watchdog、faultinjection、conformance、docs、keys 六项。一个 audit 可以包含数十个
+用例；`keys` 仍仅为库存报告。新增既有套件内的回归不会增加顶层行数。
+用例、断言、场景数量不能混加为覆盖率，也不证明无缺陷或下游产品达到商用要求。
+
 ## 隔离、报告与保留
 
 `tests/isolate.py` 建立私有 HOME、TMPDIR、工具状态目录、tmux socket 和进程组，重置继承的 `CODEX_*` / `CODEXC_*`、tmux 等运行配置，并屏蔽桌面通知。它不是操作系统网络沙箱；离线行为依靠测试使用假 CLI 和显式门控。结束时终止本次进程组和私有 tmux；取消退出非零，清理失败不能得到通过结论。夹具自己创建的新 session/daemon 要由对应测试显式管理。
@@ -88,5 +94,10 @@ git config core.hooksPath .githooks
 ```
 
 pre-commit 执行 `tests/run-all --profile full`，失败拦截提交；测试不能自动证明每个修复都有对应回归，仍需代码审查。GitHub Actions 在 macOS 上安装 tmux、选择 Python 3.11 并运行同一入口，始终尝试上传 JSON 与完整隔离产物，保留 7 天。CI 配置文件为 `.github/workflows/harness.yml`；没有推送运行结果时只能说已配置。
+
+CI 证据收集保留普通文件、隐藏日志与目录，排除编译缓存、socket、FIFO 和符号链接，
+不沿链接读取隔离目录之外的内容。`harness-runner` 直接执行 workflow 中的收集命令，
+覆盖成功/失败报告、缺失产物、损坏报告与复制错误；测试执行和产物收集都成功后，
+才能报告整个 CI 通过。
 
 失败时先查看报告的失败检查和 full log，再按 [排障手册](../docs/triage-playbook.md) 回到相同用户视图验证。真实模型、原生 TTY、已安装桌面二进制和 launchd 冒烟按 [发布指南](../docs/RELEASE.md) 独立记录。
