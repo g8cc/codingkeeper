@@ -2,6 +2,9 @@
 
 状态：源码复审与目标回归已完成，进入完整提交门禁。用户已授权提交并 push；沿用原并行审计授权。
 
+后续：首轮 full 及提交推送已完成；远端发现已退役 runner 镜像，追加最小 CI 修复和回归，
+再走同一完整提交门禁。
+
 ## 目标与范围
 
 核对待提交修复及六个尚未推送的本地提交，保留已有工作。复核任务验收、
@@ -78,3 +81,17 @@ leaf-runtime 28 项通过，清理完成。主线程另发现恢复后 gate/repa
 推送后核对 origin/main 的 SHA 和 GitHub Actions 实际状态；远端 CI 排队或运行中
 不会写作通过。本轮源码提交不等同于安装/公开发布，真实 TUI 输入、当前 GUI 点击、
 provider 在线故障切换仍未在本轮重测。最终提交号、推送与 CI 状态随交付记录。
+
+### 首次提交与远端检查
+
+2026-11-23 20:48–21:23（Asia/Singapore），真实 pre-commit full 完成 **56/56**，
+54 pass、1 pass_with_skips、1 inventory report，零失败。唯一 SKIP 为隔离 HOME 下
+两项真实 watchdog 安装检查；Swift 与桌面本次实际通过。187 份受测文件指纹未变，
+提交树与受测 index 一致。提交 `32790e3` 已正常 push，origin/main SHA 与本地一致。
+
+GitHub run `45183708043` 在测试开始前被取消，平台 annotation 为
+`The configuration 'macos-14-arm64-us-default' is not supported`。
+官方 `actions/runner-images` 公告 #13518 确认 GitHub Actions 的 macOS 14 镜像于
+2026-11-02 退役，建议迁至 macOS 15 或 26。将本仓库 runner 改为 `macos-15`，
+新增拒绝退役标签的回归先在旧配置失败，再在新配置通过；应用运行时代码保持首轮
+通过版本。后续提交仍不跳过 full，单独归档在本轮验证目录 `ci-runner/`。

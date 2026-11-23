@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -13,6 +14,14 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class RunnerTests(unittest.TestCase):
+    def test_ci_uses_a_macos_runner_without_retired_image_labels(self):
+        workflow = (ROOT / '.github/workflows/harness.yml').read_text()
+        labels = re.findall(r'^\s+runs-on:\s*["\']?([^\s"\']+)', workflow, re.M)
+        self.assertTrue(labels, 'CI must select a macOS runner')
+        for label in labels:
+            self.assertTrue(label.startswith('macos-'), label)
+            self.assertNotRegex(label, r'^macos-(?:10(?:\.\d+)?|11|12|13|14)(?:-|$)')
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix='ck-runner-audit-')
         self.addCleanup(self.tmp.cleanup)
