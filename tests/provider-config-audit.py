@@ -147,6 +147,57 @@ class ProviderTests(unittest.TestCase):
         self.write('.config/opencode/opencode.json', config)
         self.assertNotEqual(self.snap('opencode'), before)
 
+    def test_pi_active_auth_precedence_and_shadowed_keys(self):
+        self.write('.pi/agent/settings.json', {'defaultProvider':'p','defaultModel':'m'})
+        self.write('.pi/agent/models.json', {'providers':{'p':{'apiKey':'fallback'}}})
+        self.write('.pi/agent/auth.json', {'p':{'type':'api_key','key':'stored'}})
+        data, _env = provider._effective('pi', self.project)
+        self.assertEqual(data['connection']['credential'], 'stored')
+        before = self.snap('pi')
+        self.write('.pi/agent/models.json', {'providers':{'p':{'apiKey':'!must-not-run'}}})
+        self.assertEqual(self.snap('pi'), before)
+        self.write('.pi/agent/auth.json', {'p':{'type':'api_key','key':'rotated'}})
+        self.assertNotEqual(self.snap('pi'), before)
+        pinned = self.snap('pi', ['--api-key', '$LITERAL'])
+        self.write('.pi/agent/auth.json', {'p':{'type':'api_key','key':'!must-not-run'}})
+        self.assertEqual(self.snap('pi', ['--api-key', '$LITERAL']), pinned)
+        data, _env = provider._effective('pi', self.project, ['--api-key', '$LITERAL'])
+        self.assertEqual(data['connection']['credential'], '$LITERAL')
+
+    def test_pi_config_value_interpolation_and_literal_environment_names(self):
+        self.write('.pi/agent/settings.json', {'defaultProvider':'p','defaultModel':'m'})
+        os.environ['KEY'] = 'secret'
+        for source in ('models', 'auth'):
+            for value, expected in (('KEY', 'KEY'), ('$KEY', 'secret'), ('${KEY}', 'secret'),
+                                    ('Bearer $KEY/$$/$!', 'Bearer secret/$/!'),
+                                    ('${INVALID-NAME}', '${INVALID-NAME}')):
+                with self.subTest(source=source, value=value):
+                    self.write('.pi/agent/models.json', {'providers':{'p':{'apiKey':value}}})
+                    self.write('.pi/agent/auth.json', {'p':{'type':'api_key','key':value}} if source == 'auth' else {})
+                    data, _env = provider._effective('pi', self.project)
+                    self.assertEqual(data['connection']['credential'], expected)
+            for value in ('$MISSING', '!must-not-run'):
+                self.write('.pi/agent/models.json', {'providers':{'p':{'apiKey':value}}})
+                self.write('.pi/agent/auth.json', {'p':{'type':'api_key','key':value}} if source == 'auth' else {})
+                self.assertFalse(provider.snapshot('pi', self.project)['recoverable'])
+
+    def test_pi_fingerprint_tracks_resolved_keys_and_headers(self):
+        self.write('.pi/agent/settings.json', {'defaultProvider':'p','defaultModel':'m'})
+        self.write('.pi/agent/models.json', {'providers':{'p':{
+            'apiKey':'$KEY', 'headers':{'X-Auth':'Bearer ${HEADER}'}}}})
+        os.environ.update(KEY='one', HEADER='first')
+        before = self.snap('pi')
+        os.environ['KEY'] = 'two'
+        after_key = self.snap('pi')
+        self.assertNotEqual(before, after_key)
+        os.environ['HEADER'] = 'second'
+        self.assertNotEqual(after_key, self.snap('pi'))
+        self.write('.pi/agent/auth.json', {'p':{
+            'type':'api_key', 'key':'$KEY', 'env':{'KEY':'stored', 'HEADER':'stored-header'}}})
+        data, _env = provider._effective('pi', self.project)
+        self.assertEqual(data['connection']['credential'], 'stored')
+        self.assertEqual(data['connection']['headers']['X-Auth'], 'Bearer stored-header')
+
     def test_zcode_personal_provider_order_and_selected_config(self):
         config = {'config':{'providerOrder':['p'], 'providerConfigRules':{'providerRules':[
             {'providerId':'p','config':{'api':{'baseUrl':'https://p'},'access':{'apiKey':'secret'},'modelOrder':['m']}}]}}}
@@ -165,6 +216,69 @@ class ProviderTests(unittest.TestCase):
         self.write('.dsh/.credentials.yaml', {'refs':{'KEY':'new-secret'}})
         self.assertNotEqual(self.snap('dsh'), before)
         self.assertEqual(provider.launch_environment('dsh', self.project)['KEY'], 'new-secret')
+
+    def dsh_patch(self, name):
+        return [{'id':'llm-pi-ai', 'config':{'providers':{
+                    name:{'baseURL':'https://' + name, 'apiKeyEnv':'KEY', 'models':[{'id':'m'}]}}}},
+                {'id':'agent-default-model', 'config':{'provider':name, 'model':'m'}}]
+
+    def test_dsh_global_patch_without_profile_is_effective(self):
+        self.write('.dsh/cordis.patch.yml', self.dsh_patch('global'))
+        self.write('.dsh/.credentials.yaml', {'refs':{'KEY':'secret'}})
+        data, environment = provider._effective('dsh', self.project)
+        self.assertEqual(data['provider'], 'global')
+        self.assertEqual(environment['KEY'], 'secret')
+        before = self.snap('dsh')
+        self.write('.dsh/.credentials.yaml', {'refs':{'KEY':'rotated'}})
+        self.assertNotEqual(before, self.snap('dsh'))
+
+    def test_dsh_global_and_repeated_cli_patch_precedence(self):
+        self.write('.dsh/profiles/headless/cordis.patch.yml', self.dsh_patch('profile'))
+        self.write('.dsh/cordis.patch.yml', self.dsh_patch('global'))
+        self.write('project/one.yml', self.dsh_patch('first'))
+        self.write('project/two.yml', self.dsh_patch('last'))
+        data, _env = provider._effective('dsh', self.project)
+        self.assertEqual(data['provider'], 'global')
+        argv = ['--patch', 'one.yml', '--patch=two.yml']
+        data, _env = provider._effective('dsh', self.project, argv)
+        self.assertEqual(data['provider'], 'last')
+        before = self.snap('dsh', argv)
+        self.write('.dsh/cordis.patch.yml', self.dsh_patch('unused'))
+        self.assertEqual(before, self.snap('dsh', argv))
+        self.write('project/two.yml', [{'id':'llm-pi-ai', 'config':{'providers':{}}}])
+        self.assertFalse(provider.snapshot('dsh', self.project, argv)['recoverable'])
+
+    def test_dsh_bundle_is_loaded_without_profile_patch(self):
+        binary = self.write('package/lib/bin.js', '')
+        self.write('package/node_modules/@fixture/base/cordis.patch.yml',
+                   [{'id':'root', 'insert':self.dsh_patch('bundle')}])
+        self.write('.dsh/profiles/headless/package.json',
+                   {'dsh':{'profile':{'bundles':['@fixture/base']}}})
+        with patch.object(provider.shutil, 'which', return_value=str(binary)):
+            data, _env = provider._effective('dsh', self.project)
+        self.assertEqual(data['provider'], 'bundle')
+
+    def test_dsh_disabled_or_dynamic_rows_fail_closed_until_reenabled(self):
+        self.write('.dsh/profiles/headless/cordis.patch.yml', self.dsh_patch('profile'))
+        for name in ('llm-pi-ai', 'agent-default-model', 'credentials'):
+            for disabled in (True, 'dynamic expression'):
+                with self.subTest(name=name, disabled=disabled):
+                    self.write('.dsh/cordis.patch.yml', [{'id':name, 'disabled':disabled}])
+                    self.assertFalse(provider.snapshot('dsh', self.project)['recoverable'])
+            self.write('project/enable.yml', [{'id':name, 'disabled':False}])
+            self.snap('dsh', ['--patch', 'enable.yml'])
+
+    def test_dsh_missing_or_invalid_overlay_fails_closed(self):
+        self.write('.dsh/profiles/headless/cordis.patch.yml', self.dsh_patch('profile'))
+        for overlay in ('missing.yml', 'broken.yml'):
+            if overlay == 'broken.yml':
+                self.write('project/broken.yml', {'unexpected':'mapping'})
+            self.assertFalse(provider.snapshot('dsh', self.project,
+                                             ['--patch', overlay])['recoverable'])
+        for config in ('dynamic expression', {'path':'other.yaml'}, {'dshHome':'other'}):
+            self.write('project/credentials.yml', [{'id':'credentials', 'config':config}])
+            self.assertFalse(provider.snapshot('dsh', self.project,
+                                             ['--patch', 'credentials.yml'])['recoverable'])
 
     def test_provider_errors_exclude_arbitrary_task_failures(self):
         for text in ('429 Too Many Requests', 'usage limit reached', '401 Unauthorized',

@@ -39,10 +39,12 @@ def notice_reset_epoch(text):
                                 int(match.group('month')), int(match.group('day')),
                                 int(match.group('hour')), int(match.group('minute')),
                                 tzinfo=zone)
+        if candidate <= now:
+            candidate = candidate.replace(year=now.year + 1)
         if candidate <= now or candidate - now > dt.timedelta(days=7):
             return None
         return int(candidate.timestamp())
-    except (ValueError, TypeError, OverflowError):
+    except (KeyError, ValueError, TypeError, OverflowError):
         return None
 
 

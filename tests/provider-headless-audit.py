@@ -336,11 +336,25 @@ headless_record_quota_until "$(( $(date +%s) + 600 ))"; printf 'rc=%s' "$?"
                 self.assertEqual(out, expected)
 
     def test_real_dsh_adapter_reloads_credentials_and_keeps_exact_session(self):
+        self.dsh_adapter_case(False)
+
+    def test_real_dsh_adapter_honors_global_selection_patch_on_recovery(self):
+        self.dsh_adapter_case(True)
+
+    def dsh_adapter_case(self, global_patch):
         config = self.home / '.dsh'
         config.mkdir()
         settings = config / 'settings.yaml'
-        settings.write_text(json.dumps({'llm-pi-ai': {'defaultModel': 'p/m', 'providers': {
-            'p': {'baseURL': 'https://old.invalid', 'apiKeyEnv': 'FIXTURE_KEY', 'models': [{'id': 'm'}]}}}}))
+        llm = {'providers': {
+            'p': {'baseURL': 'https://old.invalid', 'apiKeyEnv': 'FIXTURE_KEY', 'models': [{'id': 'm'}]},
+            'other': {'baseURL': 'https://unused.invalid', 'models': [{'id': 'other'}]}}}
+        if global_patch:
+            (config / 'cordis.patch.yml').write_text(json.dumps([
+                {'id':'agent-default-model', 'config':{'provider':'p', 'model':'m'}},
+                {'id':'credentials', 'disabled':False}]))
+        else:
+            llm['defaultModel'] = 'p/m'
+        settings.write_text(json.dumps({'llm-pi-ai':llm}))
         (config / '.credentials.yaml').write_text(json.dumps({'refs': {'FIXTURE_KEY': 'fixture-old'}}))
         (self.state / 'dsh-session-id').write_text('exact-session\n')
         binary = self.world / 'fake-dsh'

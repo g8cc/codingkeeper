@@ -59,7 +59,10 @@ idle(队列取任务) ──投喂──▶ task(work → gate → review) ─�
 
 | 情况 | 处理 |
 |---|---|
-| gate 失败 | 输出尾部回灌 worker 修复，最多 `CODEXC_GATE_RETRIES`(3) 次 |
+| gate 失败 | 输出尾部回灌 worker 修复，最多 `CODEXC_GATE_RETRIES`(3) 次；headless 审查后的 gate 复检同样有界，设为 0 时不投喂修复 |
+| gate.sh 自身退出 125/126 | 按普通失败消耗重试预算，日志保留原始退出码；不冒充控制器取消或证据错误 |
+| gate 候选变化或证据保存失败 | 立即停炉并保留任务和现场；返回 126 不进入普通门禁重试 |
+| TUI 在 gate/review 阶段丢失 rollout 或完成证据 | 明确停炉并保留任务；不继续等待已无法核实的完成事件 |
 | gate 超时（`CODEXC_GATE_TIMEOUT`=900s） | 整个进程树 kill → 回灌/挂起 |
 | gate.sh 不存在/官方占位 | 自动入口默认停止，先配置真实门禁；非 ZCode 可显式 CODEXC_REQUIRE_GATE=0 使用旧兼容行为 |
 | gate.sh 是任意代码 | 信任边界 = 你自己写的 CI 脚本；爆炸半径 = 用户权限 |
@@ -96,7 +99,11 @@ idle(队列取任务) ──投喂──▶ task(work → gate → review) ─�
 |---|---|
 | 同项目启动第二个 runner | 锁（`.codingkeeper/loop.pid`）拒绝 |
 | runner 被 kill -9 | 下个驱动在共享锁内确认旧 PID 已死后接管；无效元数据需检查 |
+| watchdog 无法读取 runner cwd | 跳过该进程，继续核对其他归属；空 cwd 不得沿用巡逻目录并据此判活 |
+| watchdog 复燃与服务停止 | 新复燃 runner 使用独立进程组并关闭继承描述符；已运行的旧实例不会自动迁组，维护重启前仍须核对其实际归属 |
 | worker 会话/进程死亡 | 驱动自回收（无孤儿、无虚假验收） |
+| TUI gate/review 被可用时段或人工操作中断 | 保留当前验收阶段；review 中断不消耗审查/解析预算，gate/review 等待不按 worker 无进展处理；人工 halt 仍优先 |
+| headless gate/review/修复回合因时段或交互暂停 | 在当前阶段等待恢复，保留审查与失败预算；不重新投喂已完成主任务，恢复 gate/review 前核验候选未变；人工 halt 仍停止 |
 | 用户想暂停 | `touch .codingkeeper/loop.halt`；复燃 `rm .codingkeeper/loop.halt` |
 | dry 试跑 | `CODEXC_LOOP_DRY=1`（TUI 通道跑完首条即停；headless 只记录不执行） |
 
@@ -111,13 +118,15 @@ idle(队列取任务) ──投喂──▶ task(work → gate → review) ─�
 | 任务文本特殊字符/换行 | b64/stdin 传递，不进 shell；逐字 send-keys |
 | CRLF 队列文件 | 解析容错 |
 | 投喂后 worker 长时间无进展（卡弹窗/登录门） | `CODEXC_LOOP_STALL`(300s) 无进展 park + 通知 |
+| TUI 等待 provider 配置更新 | 已验证的等待区间暂停无进展与回合总时限；恢复沿用 `CODEXC_TURN_TIMEOUT` 剩余预算，见 [Provider 恢复](PROVIDER-RECOVERY.md) |
 
 ## 四、headless 通道专属
 
 | 情况 | 处理 |
 |---|---|
 | worker 回合超时（`CODEXC_HEADLESS_TIMEOUT`=3600s） | 整树 kill → 失败计数，连续 `CODEXC_TURN_RETRIES`(3) 次 park |
-| worker 空输出（认证失效等） | 失败计数，连续 3 次 park + 通知（日志含输出尾迹） |
+| 未分类失败或空输出 | 按 `CODEXC_TURN_RETRIES`（默认 3）有界退避；已分类 auth/quota/transient 优先走各自处理。符合 provider 恢复条件时先等待有效配置变化，详见 [Provider 恢复](PROVIDER-RECOVERY.md)。 |
+| gate/review 修复回合失败 | worker 未分类失败使用 `CODEXC_TURN_RETRIES`；worker 完成后 gate 再失败使用 `CODEXC_GATE_RETRIES`，两种预算不混用 |
 | 会话连续性 | zcode: sessionId 存 `.codingkeeper/zcode-session-id` 每轮 `--resume`；resume 前校验 CLI 数据库里的 `directory` 与 `path` 都解析到当前项目；跨项目/无法核验时先停 worker 并保留 ID；dsh: `.codingkeeper/dsh-session-id`（从本次 --json session 事件原子保存，每轮 --session-id；失败/超时保留） |
 | zcode 首次失败/空响应/超时 | stream-json 的 `turn.started` 提前将 `sess_...` 保存至 `.codingkeeper/zcode-session-id.retry`，下一轮续接；成功后提升为主会话并移除 retry。已有主会话始终优先，失败不覆盖有效上下文 |
 | zcode 本地 ID 损坏/恢复 ID 突变 | 报错并阻止继续建会话。新建上下文前同时备份并移走 `zcode-session-id` 和 `zcode-session-id.retry`；手动 halt 不受此机制影响 |
@@ -179,7 +188,7 @@ install 自动编译（Swift/AppKit，`desktop/CodingKeeperBar.swift`）。
 1. **验收只认真实证据**: gate 的退出码 + 独立审查的 BUGS 行；worker 自述永远不算数。
 2. **失败方向是 park**: 任何无法判定的情况挂起等人，绝不带病续跑或虚假验收。
 3. **完成事件一次性消费**: 水位 + 活动门 + 新鲜度令牌三层防陈旧误收。
-4. **每层都有上限**: 续命 30 / gate 3 / 审查 6 / 空转 2 / 回合超时 3600s——无界循环不存在。
+4. **执行与重试有预算**：续命、gate、审查及回合执行遵守各自配置上限；TUI 经核验的 provider 等待暂停回合计时，恢复沿用剩余预算。等待新配置不发送模型请求。
 5. **外环零智能**: bash + tmux + 退出码；智能全部在 Agent 内，机械全部可审查。
 
 ## 本轮审计补充

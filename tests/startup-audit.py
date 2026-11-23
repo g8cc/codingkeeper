@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Offline startup, ownership and configuration regressions; no real provider calls."""
 import json, os, pathlib, shlex, subprocess, tempfile, unittest
+from fixture_processes import wait_watchers_exited
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SOURCE = pathlib.Path(os.environ.get('CODEXC_TEST_SOURCE', ROOT / 'codexc')).read_text()
 FUNCTIONS = SOURCE.split('# ---- internal: standalone watcher entry')[0]
@@ -120,6 +121,10 @@ class StartupTests(unittest.TestCase):
         project=self.p/"project '空 格;$(touch OWNED)"; project.mkdir()
         def tmux(*args):
             return subprocess.run([str(self.p/'bin/tmux'),*args],env=env,text=True,capture_output=True,timeout=10)
+        def wait_watchers():
+            self.assertEqual(wait_watchers_exited(project), {},
+                             'private watcher processes survived tmux shutdown')
+        self.addCleanup(wait_watchers)
         self.addCleanup(lambda: tmux('kill-server'))
         r=tmux('-f','/dev/null','new-session','-d','-s','unrelated','sleep 60')
         self.assertEqual(r.returncode,0,r.stderr)
@@ -145,6 +150,7 @@ class StartupTests(unittest.TestCase):
             try: child.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 child.kill(); child.wait(timeout=5)
+            wait_watchers()
 
     def test_concurrent_trust_updates_preserve_all_projects(self):
         import tomllib

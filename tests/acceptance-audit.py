@@ -399,6 +399,61 @@ run_runner
       and 'worker auth failure' in (w / '.codingkeeper/loop.halt').read_text()
       and (w / 'worker-count').read_text().strip() == '3')
 
+run('post-review gate respects a zero repair budget', runner_stubs + '''
+CODEXC_REVIEW_PARALLEL=0
+CODEXC_REVIEW_PASS=1
+CODEXC_REVIEW_ROUNDS=3
+CODEXC_GATE_RETRIES=0
+headless_turn() { local count; count=$(cat worker-count 2>/dev/null || echo 0); echo $((count+1)) > worker-count; printf 'TASK_RESULT: DONE\\n' > "$2"; }
+gate_run() { local count; count=$(cat gate-count 2>/dev/null || echo 0); echo $((count+1)) > gate-count; : > "$1"; [ "$count" != 1 ]; }
+review_run() { local count; count=$(cat review-count 2>/dev/null || echo 0); echo $((count+1)) > review-count; : > "$2"; if [ "$count" = 0 ]; then printf 1; else printf 0; fi; }
+run_runner
+''', lambda rc, out, err, world: rc == 0
+      and (world / 'worker-count').read_text().strip() == '2'
+      and not (world / '.codingkeeper/journal').exists()
+      and 'post-review fix gate failed' in (world / '.codingkeeper/loop.halt').read_text())
+
+for unsafe_gate_call in (2, 3):
+    run(f'post-review gate evidence failure at call {unsafe_gate_call} stops repairs', runner_stubs + '''
+CODEXC_REVIEW_PARALLEL=0
+CODEXC_REVIEW_PASS=1
+CODEXC_REVIEW_ROUNDS=3
+CODEXC_GATE_RETRIES=3
+UNSAFE_GATE_CALL=''' + str(unsafe_gate_call) + '''
+headless_turn() { local count; count=$(cat worker-count 2>/dev/null || echo 0); echo $((count+1)) > worker-count; printf 'TASK_RESULT: DONE\\n' > "$2"; }
+leaf_gate_run() { local count; leaf_candidate || return 126; count=$(cat gate-count 2>/dev/null || echo 0); count=$((count+1)); echo "$count" > gate-count; : > "$1"; [ "$count" != "$UNSAFE_GATE_CALL" ] || return 126; [ "$count" != 2 ]; }
+review_run() { local count; count=$(cat review-count 2>/dev/null || echo 0); echo $((count+1)) > review-count; : > "$2"; if [ "$count" = 0 ]; then printf 1; else printf 0; fi; }
+run_runner
+''', lambda rc, out, err, world: rc == 0
+          and (world / 'worker-count').read_text().strip() == str(unsafe_gate_call)
+          and not (world / '.codingkeeper/journal').exists()
+          and 'gate candidate changed or evidence failed' in (world / '.codingkeeper/loop.halt').read_text())
+
+for repair_outcome, repair_output, repair_exit, expected_reason in (
+        ('quota', 'CK_QUOTA_UNTIL: 1999999999\\nCK_ERROR_CLASS: quota', 1, 'quota preserved'),
+        ('transient', 'CK_ERROR_CLASS: transient', 1, 'transient worker failure'),
+        ('blocked', 'TASK_RESULT: BLOCKED: needs a decision', 0, 'gate fix turn blocked'),
+        ('cancelled', '', 125, 'manual halt')):
+    run(f'post-review gate repair preserves {repair_outcome}', runner_stubs + '''
+CODEXC_REVIEW_PARALLEL=0
+CODEXC_REVIEW_PASS=1
+CODEXC_REVIEW_ROUNDS=3
+CODEXC_GATE_RETRIES=3
+sleep() { :; }
+REPAIR_OUTPUT=''' + shlex.quote(repair_output) + '''
+REPAIR_EXIT=''' + str(repair_exit) + '''
+headless_turn() { local count; count=$(cat worker-count 2>/dev/null || echo 0); echo $((count+1)) > worker-count; if [ "$count" -lt 2 ]; then printf 'TASK_RESULT: DONE\\n' > "$2"; return 0; fi; printf '%b\\n' "$REPAIR_OUTPUT" > "$2"; [ "$REPAIR_EXIT" != 125 ] || printf 'manual halt' > .codingkeeper/loop.halt; return "$REPAIR_EXIT"; }
+headless_quota_pause() { cp "$1" quota-evidence; printf 'quota preserved' > .codingkeeper/loop.halt; }
+gate_run() { local count; count=$(cat gate-count 2>/dev/null || echo 0); echo $((count+1)) > gate-count; : > "$1"; [ "$count" = 0 ]; }
+review_run() { : > "$2"; printf 1; }
+run_runner
+''', lambda rc, out, err, world: rc == 0
+          and (world / 'worker-count').read_text().strip() == '3'
+          and (world / 'gate-count').read_text().strip() == '2'
+          and not (world / '.codingkeeper/journal').exists()
+          and expected_reason in (world / '.codingkeeper/loop.halt').read_text()
+          and (repair_outcome != 'quota' or 'CK_QUOTA_UNTIL: 1999999999' in (world / 'quota-evidence').read_text()))
+
 if FAILURES:
     print(f'ACCEPTANCE AUDIT FAILED ({len(FAILURES)})')
     raise SystemExit(1)

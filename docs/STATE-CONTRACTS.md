@@ -23,7 +23,7 @@
 | `dsh-session-id` | dsh 适配器 / 下一轮 | 保存本次结构化 session 事件的 ID；失败保留，不静默切新上下文 |
 | `active-leaf.json` | leaf 生命周期 / 验收与证据保留 | 活动候选需要保留，不能当作过期缓存删除 |
 | `acceptance.pending.json` | `ck-leaf.py` / 启动恢复 | 幂等补齐 queue/journal/receipt；与外部队列编辑冲突时停止人工核对 |
-| `journal` | 验收事务 / status、morning、quality-trend | receipt 关联的验收记录；旧格式记录不能追溯成新式完整快照 |
+| `journal` | 验收事务 / status、morning、quality-trend | receipt 关联的验收记录；验收读写仅接受普通文件，拒绝符号链接和 FIFO；旧格式记录不能追溯成新式完整快照 |
 | `evidence/<id>/`、`evidence/.blobs/` | leaf 快照与验证 / reviewer、维护者 | 每份证据含 `blobs/` 引用，共享内容在 `.blobs/`；保留基线、候选、输出与 accepted receipt，按源码权限保护 |
 | `burn-cursor.json`、`fuel-packs.json`、`prompts/` | 燃料管理 / runner | 配置与轮转持久化；目录变化触发重扫，不能将等待燃料误当作正在调用模型 |
 

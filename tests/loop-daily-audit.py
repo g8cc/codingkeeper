@@ -126,6 +126,120 @@ if [ -f .codingkeeper/journal ]; then cat .codingkeeper/journal; fi
 ''')
         self.assertNotIn("accepted after", output)
 
+    def paused_validation(self, phase, pause, replacement=None, banner="1"):
+        project = self.world / (phase + '-' + pause + '-' + (replacement or 'unchanged'))
+        state = project / '.codingkeeper'
+        state.mkdir(parents=True)
+        (project / '.gitignore').write_text('.codingkeeper/\n')
+        subprocess.run(['git', 'init', '-q', str(project)], check=True, capture_output=True, timeout=10)
+        (state / 'queue.md').write_text('## ready\n- [ ] task\n')
+        (state / 'rollout.jsonl').write_text('')
+        completion = (json.dumps(self.done()) + '\n').encode()
+        (state / 'completion').write_bytes(completion)
+        if replacement:
+            event = json.dumps({'payload': {'type': replacement}}).encode()
+            (state / 'replacement').write_bytes(event + b' ' * (len(completion) - len(event) - 1) + b'\n')
+            self.assertEqual((state / 'replacement').stat().st_size, len(completion))
+        output = self.shell('codexc-loop', r'''
+cd "$AUDIT_PROJECT" || exit 1
+notify() { :; }
+register_project() { :; }
+sleep() { :; }
+tmux() { return 0; }
+pane_idle() { return 0; }
+find_rollout() { printf '%s' "$PWD/.codingkeeper/rollout.jsonl"; }
+iterations=0
+date() {
+    if [ "$1" = +%s ]; then printf '%s\n' "$((100 + iterations * 30))"; else command date "$@"; fi
+}
+pane_alive() {
+    iterations=$((iterations + 1))
+    if [ "$AUDIT_PAUSE" = manual ] && [ "$iterations" = 4 ]; then rm -f .codingkeeper/loop.halt; fi
+    [ "$iterations" -lt 10 ]
+}
+ck_run_check() {
+    if [ -e .codingkeeper/loop.halt ]; then CK_WINDOW_REASON=manual_stop; return 125; fi
+    if [ -e .codingkeeper/cancelled ] && [ ! -e .codingkeeper/waited ]; then
+        case "$AUDIT_PAUSE" in
+            window|interaction)
+                touch .codingkeeper/waited
+                CK_WINDOW_REASON=outside_window
+                [ "$AUDIT_PAUSE" != interaction ] || CK_WINDOW_REASON=user_interactive
+                CK_WINDOW_NEXT_OPEN=9999999999
+                return 125
+                ;;
+        esac
+    fi
+    return 0
+}
+feed_msg() {
+    printf 'feed\n' >> .codingkeeper/feeds
+    cat .codingkeeper/completion >> .codingkeeper/rollout.jsonl
+}
+validation_stage() {
+    printf '%s\n' "$1" >> .codingkeeper/stages
+    : > "$2"
+    if [ "$1" = "$AUDIT_PHASE" ]; then
+        if [ ! -e .codingkeeper/cancelled ]; then
+            touch .codingkeeper/cancelled
+            if [ -f .codingkeeper/replacement ]; then mv .codingkeeper/replacement .codingkeeper/rollout.jsonl; fi
+            if [ "$AUDIT_PAUSE" = manual ]; then
+                printf 'operator pause\n' > .codingkeeper/.halt
+                mv .codingkeeper/.halt .codingkeeper/loop.halt
+            fi
+            [ "$1" != review ] || printf window-closed
+            return 125
+        fi
+        status_touch
+        cat .codingkeeper/status.json >> .codingkeeper/observations.jsonl
+        printf '\n' >> .codingkeeper/observations.jsonl
+    fi
+    if [ "$1" = review ]; then printf 'BUGS: 0\n' > "$2"; printf 0; fi
+    return 0
+}
+gate_run() { validation_stage gate "$1"; }
+review_run() { validation_stage review "$2"; }
+run_driver audit
+turn_status .codingkeeper/rollout.jsonl .codingkeeper/actual
+''', AUDIT_PROJECT=str(project), AUDIT_PHASE=phase, AUDIT_PAUSE=pause,
+            HOME=str(self.world), CODEXC_LOG_DIR=str(self.world / 'logs'),
+            CODEXC_ACTIVE_WINDOW='', CODEXC_TOOL='codex', CODEXC_BANNER=banner,
+            CODEXC_REQUIRE_GATE='0', CODEXC_REVIEW_PASS='2', CODEXC_REVIEW_ROUNDS='2',
+            CODEXC_REVIEW_PARSE_RETRIES='0', CODEXC_LOOP_STALL='300', CODEXC_TURN_TIMEOUT='3600')
+        return state, output
+
+    def test_validation_resume_rechecks_equal_size_completion_replacement(self):
+        for phase in ('gate', 'review'):
+            for replacement, outcome in (('turn_aborted', 'error'), ('task_started', 'none')):
+                with self.subTest(phase=phase, replacement=replacement):
+                    state, actual = self.paused_validation(phase, 'none', replacement)
+                    self.assertEqual(actual, outcome)
+                    self.assertIn('- [ ] task', (state / 'queue.md').read_text())
+                    self.assertFalse((state / 'journal').exists())
+                    self.assertEqual(list((state / 'evidence').glob('*/accepted.json')), [])
+                    self.assertTrue((state / 'loop.halt').exists())
+                    self.assertEqual((state / 'feeds').read_text(), 'feed\n')
+                    self.assertEqual((state / 'stages').read_text().splitlines().count(phase), 1)
+
+    def test_validation_resume_restores_stage_status_and_heartbeat(self):
+        for phase, pause, banner in (('gate', 'window', '1'), ('review', 'window', '1'),
+                                     ('review', 'manual', '1'), ('gate', 'interaction', '0')):
+            with self.subTest(phase=phase, pause=pause, banner=banner):
+                state, actual = self.paused_validation(phase, pause, banner=banner)
+                self.assertEqual(actual, 'clean')
+                self.assertIn('- [x] task', (state / 'queue.md').read_text())
+                self.assertFalse((state / 'loop.halt').exists())
+                self.assertEqual(len(list((state / 'evidence').glob('*/accepted.json'))), 1)
+                self.assertEqual((state / 'feeds').read_text(), 'feed\n')
+                observations = [json.loads(line) for line in (state / 'observations.jsonl').read_text().splitlines()]
+                self.assertTrue(observations)
+                for status in observations:
+                    self.assertTrue(status['active'], status)
+                    self.assertEqual(status['phase'], phase, status)
+                    self.assertEqual(status['next_run_at'], 0, status)
+                    self.assertGreater(status['started_at'], 0, status)
+                    self.assertFalse(status['parked'], status)
+
     def test_discovery_does_not_drop_older_active_project(self):
         for i in range(20):
             path = self.world / "sessions" / (str(i) + ".jsonl")
@@ -179,6 +293,36 @@ if [ -f .codingkeeper/journal ]; then cat .codingkeeper/journal; fi
             db.execute('UPDATE session_message SET data=?', (json.dumps({"finish":"stop"}),))
         after = self.shell("codexc-loop", 'rollout_size s', CODEXC_TOOL="opencode", OPENCODE_DATA_DIR=str(self.world))
         self.assertNotEqual(before, after)
+
+    def test_opencode_new_user_or_invalid_idle_does_not_replay_previous_completion(self):
+        import sqlite3
+        cases = [('user', {}), ('idle', {'outcome': 'cancelled'}), ('idle', {'outcome': 'failed'})]
+        with sqlite3.connect(self.world / 'opencode.db') as connection:
+            connection.execute('CREATE TABLE session_message (session_id TEXT, type TEXT, seq INTEGER, data TEXT)')
+        for kind, payload in cases:
+            with self.subTest(kind=kind, payload=payload):
+                with sqlite3.connect(self.world / 'opencode.db') as connection:
+                    connection.execute('DELETE FROM session_message')
+                    connection.execute('INSERT INTO session_message VALUES (?,?,?,?)',
+                                       ('s', 'assistant', 7, json.dumps({'finish': 'stop', 'content': [{'type': 'text', 'text': 'old'}]})))
+                    connection.execute('INSERT INTO session_message VALUES (?,?,?,?)', ('s', kind, 12, json.dumps(payload)))
+                output = self.world / '.codingkeeper/msg'
+                output.unlink(missing_ok=True)
+                self.assertEqual(self.shell('codexc-loop', 'turn_status_opencode s .codingkeeper/msg',
+                                            CODEXC_TOOL='opencode', OPENCODE_DATA_DIR=str(self.world)), 'none')
+                self.assertFalse(output.exists())
+
+    def test_opencode_successful_idle_preserves_answer_and_assistant_sequence(self):
+        import sqlite3
+        with sqlite3.connect(self.world / 'opencode.db') as connection:
+            connection.execute('CREATE TABLE session_message (session_id TEXT, type TEXT, seq INTEGER, data TEXT)')
+            connection.execute('INSERT INTO session_message VALUES (?,?,?,?)',
+                               ('s', 'assistant', 7, json.dumps({'finish': 'stop', 'content': [{'type': 'text', 'text': 'TASK_RESULT: DONE'}]})))
+            connection.execute('INSERT INTO session_message VALUES (?,?,?,?)', ('s', 'idle', 11, json.dumps({'outcome': 'succeeded'})))
+        self.assertEqual(self.shell('codexc-loop', 'turn_status_opencode s .codingkeeper/msg',
+                                    CODEXC_TOOL='opencode', OPENCODE_DATA_DIR=str(self.world)), 'clean')
+        self.assertEqual((self.world / '.codingkeeper/msg').read_text(), 'TASK_RESULT: DONE')
+        self.assertEqual((self.world / '.codingkeeper/msg.tok').read_text(), '7')
 
     def daily_stub(self, command="codex", tool="codex"):
         return self.shell("codexc-daily", r'''
@@ -237,6 +381,138 @@ run_driver audit
 cat .codingkeeper/journal 2>/dev/null || true
 ''', CODEXC_LOOP_STALL="5", CODEXC_TURN_TIMEOUT="30")
         self.assertIn("accepted after", output)
+
+    def provider_timeline(self, steps, tasks=('task',), **environment):
+        self.write_rollout([])
+        state = self.world / '.codingkeeper'
+        (state / 'queue.md').write_text('## ready\n' + ''.join('- [ ] ' + task + '\n' for task in tasks))
+        (state / 'timeline.json').write_text(json.dumps(steps))
+        binaries = self.world / 'bin'
+        binaries.mkdir(exist_ok=True)
+        tmux = binaries / 'tmux'
+        tmux.write_text('''#!/usr/bin/env python3
+import os, sys
+from pathlib import Path
+if sys.argv[1] == 'show-option':
+    print({'@codexc_owner': os.environ['AUDIT_DRIVER_PID'],
+           '@codexc_tool': os.environ['CODEXC_TOOL'],
+           '@codexc_project': str(Path.cwd().resolve())}.get(sys.argv[-1], ''))
+elif sys.argv[1] == 'capture-pane':
+    print('esc to interrupt' if Path('.codingkeeper/busy').exists() else 'ctrl+p commands')
+''')
+        tmux.chmod(0o755)
+        (self.world / 'timeline.py').write_text('''import json, os, sys, time
+from pathlib import Path
+state = Path('.codingkeeper')
+steps = json.loads((state / 'timeline.json').read_text())
+position = int(sys.argv[1]) - 1
+if position:
+    with (state / 'observations.jsonl').open('a') as output:
+        status = json.loads((state / 'status.json').read_text()) if (state / 'status.json').exists() else {}
+        output.write(json.dumps({'at': steps[position - 1]['at'], 'halt': (state / 'loop.halt').exists(),
+                                 'status': status}) + '\\n')
+if position == len(steps):
+    raise SystemExit(1)
+step = steps[position]
+(state / 'clock').write_text(str(step['at']))
+record = dict(tool=os.environ['CODEXC_TOOL'], pane='%1', owner=sys.argv[2], pid=int(sys.argv[2]),
+              project=str(Path.cwd().resolve()), generation=os.environ['CK_PROVIDER_GENERATION'],
+              phase='waiting_provider' if step.get('wait') else 'active', heartbeat=time.time(),
+              source=str(Path('rollout.jsonl').resolve()))
+fault = step.get('fault')
+if fault == 'stale': record['heartbeat'] -= 60
+if fault == 'generation': record['generation'] = 'b' * 32
+if fault == 'owner': record['owner'] = '1'
+if fault == 'source': record['source'] += '.foreign'
+if fault == 'dead': record['pid'] = 1
+if fault == 'busy': (state / 'busy').touch()
+else: (state / 'busy').unlink(missing_ok=True)
+temporary = state / '.control'
+temporary.write_text(json.dumps(record))
+temporary.replace(state / 'provider-supervisor-1.json')
+if fault == 'manual':
+    temporary.write_text('operator pause')
+    temporary.replace(state / 'loop.halt')
+if step.get('complete'):
+    with Path('rollout.jsonl').open('a') as output:
+        output.write(json.dumps({'payload': {'type': 'task_complete', 'last_agent_message': 'TASK_RESULT: DONE'}}) + '\\n')
+''')
+        config = dict(HOME=str(self.world), CODEXC_LOG_DIR=str(self.world / 'logs'),
+                      PATH=str(binaries) + os.pathsep + os.environ['PATH'],
+                      CODEXC_TOOL='codex', CK_PROVIDER_GENERATION='a' * 32,
+                      CODEXC_REQUIRE_GATE='0', CODEXC_ACTIVE_WINDOW='',
+                      CODEXC_LOOP_STALL='300', CODEXC_TURN_TIMEOUT='10')
+        config.update(environment)
+        self.shell('codexc-loop', r'''
+export AUDIT_DRIVER_PID=$$
+sleep() { :; }
+date() { if [ "$1" = +%s ]; then cat .codingkeeper/clock; else command date "$@"; fi; }
+find_rollout() { printf '%s' "$PWD/rollout.jsonl"; }
+iterations=0
+pane_alive() {
+    iterations=$((iterations+1))
+    command python3 timeline.py "$iterations" "$$"
+}
+feed_msg() { printf 'feed\n' >> .codingkeeper/feeds; }
+gate_run() { return 0; }
+review_run() { printf 0; }
+run_driver '%1'
+''', **config)
+        return [json.loads(line) for line in (state / 'observations.jsonl').read_text().splitlines()]
+
+    def test_provider_wait_preserves_remaining_turn_budget_across_repeated_pauses(self):
+        observations = self.provider_timeline([
+            {'at': 100}, {'at': 104, 'wait': True}, {'at': 130, 'wait': True}, {'at': 131},
+            {'at': 133, 'wait': True}, {'at': 180, 'wait': True}, {'at': 182}, {'at': 183}])
+        self.assertFalse(any(row['halt'] for row in observations[:-1]), observations)
+        self.assertTrue(observations[-1]['halt'], 'real execution must still reach its original timeout budget')
+        self.assertTrue(observations[3]['status']['active'], 'recovery must clear the waiting display')
+        self.assertNotEqual(observations[3]['status']['phase'], 'waiting_provider')
+        self.assertEqual((self.world / '.codingkeeper/feeds').read_text(), 'feed\n')
+        self.assertFalse((self.world / '.codingkeeper/journal').exists())
+
+    def test_provider_wait_can_resume_and_accept_the_original_task(self):
+        observations = self.provider_timeline([
+            {'at': 100}, {'at': 104, 'wait': True}, {'at': 160, 'wait': True},
+            {'at': 161, 'complete': True}, {'at': 161}, {'at': 161}])
+        self.assertFalse(any(row['halt'] for row in observations), observations)
+        self.assertIn('- [x] task', (self.world / '.codingkeeper/queue.md').read_text())
+        self.assertEqual((self.world / '.codingkeeper/journal').read_text().count('receipt='), 1)
+        self.assertEqual((self.world / '.codingkeeper/feeds').read_text(), 'feed\n')
+
+    def test_invalid_provider_wait_does_not_hide_turn_timeout(self):
+        for fault in ('stale', 'generation', 'owner', 'source', 'dead', 'busy'):
+            with self.subTest(fault=fault):
+                (self.world / '.codingkeeper/loop.halt').unlink(missing_ok=True)
+                (self.world / '.codingkeeper/observations.jsonl').unlink(missing_ok=True)
+                observations = self.provider_timeline([
+                    {'at': 100}, {'at': 104, 'wait': True}, {'at': 130, 'wait': True},
+                    {'at': 160, 'wait': True, 'fault': fault}])
+                self.assertFalse(any(row['halt'] for row in observations[:-1]), observations)
+                self.assertTrue(observations[-1]['halt'], observations)
+
+    def test_provider_wait_cannot_override_manual_halt(self):
+        observations = self.provider_timeline([
+            {'at': 100}, {'at': 104, 'wait': True}, {'at': 160, 'wait': True},
+            {'at': 161, 'wait': True, 'fault': 'manual'}])
+        self.assertFalse(any(row['halt'] for row in observations[:-1]), observations)
+        self.assertTrue(observations[-1]['halt'])
+        self.assertEqual((self.world / '.codingkeeper/loop.halt').read_text(), 'operator pause')
+
+    def test_late_provider_wait_cannot_reset_exhausted_execution_budget(self):
+        observations = self.provider_timeline([{'at': 100}, {'at': 111, 'wait': True}])
+        self.assertTrue(observations[-1]['halt'])
+
+    def test_provider_wait_credit_does_not_extend_the_next_task(self):
+        observations = self.provider_timeline([
+            {'at': 100}, {'at': 104, 'wait': True}, {'at': 160, 'wait': True},
+            {'at': 161, 'complete': True}, {'at': 161}, {'at': 162}, {'at': 172}],
+            tasks=('task', 'next task'))
+        self.assertFalse(any(row['halt'] for row in observations[:-1]), observations)
+        self.assertTrue(observations[-1]['halt'])
+        self.assertIn('- [x] task\n- [ ] next task', (self.world / '.codingkeeper/queue.md').read_text())
+        self.assertEqual((self.world / '.codingkeeper/journal').read_text().count('receipt='), 1)
+        self.assertEqual((self.world / '.codingkeeper/feeds').read_text(), 'feed\nfeed\n')
 
 
 if __name__ == "__main__":

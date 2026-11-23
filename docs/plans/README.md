@@ -8,6 +8,22 @@
 
 当前记录：
 
+- [2026-11-23 最终复审、提交与推送](2026-11-23-final-review-push.md)
+
+- [2026-11-20 从 KeyDrop 恢复工具配置](2026-11-20-keydrop-provider-recovery.md)
+
+- [2026-11-20 发布验收收敛](2026-11-20-release-convergence.md)
+
+- [2026-11-20 并行源码审计与回归修复](2026-11-20-parallel-bug-audit.md)
+
+- [2026-11-20 发布复核与边界修复](2026-11-20-post-review-gate-boundaries.md)
+
+- [2026-11-19 在线响应与会话续接验收](2026-11-19-online-release.md)
+
+- [2026-11-19 发布前实机验收](2026-11-19-release-smoke.md)
+
+- [2026-11-19 Provider 等待与回合超时](2026-11-19-provider-wait-timeout.md)
+
 - [2026-11-16 Provider 配置切换后自动恢复](2026-11-16-provider-recovery.md)
 
 - [2026-11-16 Codex 子 Agent 日志隔离](2026-11-16-codex-subagent-watcher.md)

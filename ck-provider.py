@@ -226,6 +226,25 @@ def _claude(cwd, argv, env):
             'apiKeyHelper': data.get('apiKeyHelper')}, env
 
 
+def _pi_value(value, env):
+    if not isinstance(value, str) or value.startswith('!'):
+        raise ValueError('Pi dynamic credential cannot be inspected')
+
+    def expand(match):
+        token = match[0]
+        if token in ('$$', '$!'):
+            return token[1:]
+        name = token[2:-1] if token.startswith('${') else token[1:]
+        if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', name):
+            return token
+        resolved = env.get(name)
+        if not isinstance(resolved, str) or not resolved:
+            raise ValueError('Pi credential environment is missing')
+        return resolved
+
+    return re.sub(r'\$(?:[$!]|\{[^}]*\}|[A-Za-z_][A-Za-z0-9_]*)', expand, value)
+
+
 def _pi(cwd, argv, env):
     home = Path(env.get('PI_CODING_AGENT_DIR') or env.get('PI_DIR') or Path.home() / '.pi/agent')
     data = _json(home / 'settings.json')
@@ -242,13 +261,25 @@ def _pi(cwd, argv, env):
     entry = providers.get(name, {})
     auth = _json(home / 'auth.json', optional=True).get(name, {})
     settings = _connection(entry)
-    key = _option(argv, '--api-key') or entry.get('apiKey')
-    if isinstance(key, str) and key.startswith('!'):
-        raise ValueError('Pi shell credential commands cannot be inspected')
-    if isinstance(key, str):
-        settings['credential'] = env.get(key, key)
+    settings.pop('apiKey', None)
+    key = _option(argv, '--api-key')
+    credential_env = env
+    if key:
+        settings['credential'] = key
     elif auth:
-        settings['credential'] = auth
+        credential_env = dict(env)
+        stored_env = auth.get('env', {})
+        if not isinstance(stored_env, dict) or not all(isinstance(value, str) for value in stored_env.values()):
+            raise ValueError('invalid Pi credential environment')
+        credential_env.update({name: value for name, value in stored_env.items() if value})
+        if auth.get('type') == 'api_key':
+            settings['credential'] = _pi_value(auth.get('key'), credential_env)
+        elif auth.get('type') == 'oauth':
+            settings['credential'] = auth
+        else:
+            raise ValueError('unknown Pi credential type')
+    elif 'apiKey' in entry:
+        settings['credential'] = _pi_value(entry['apiKey'], env)
     else:
         # Built-in providers resolve these names. Include only the selected one.
         key_name = {'openai':'OPENAI_API_KEY','anthropic':'ANTHROPIC_API_KEY','google':'GEMINI_API_KEY',
@@ -257,6 +288,9 @@ def _pi(cwd, argv, env):
         if not key_name or not env.get(key_name):
             raise ValueError('Pi provider credentials are not inspectable')
         settings['credential'] = env[key_name]
+    if 'headers' in settings:
+        settings['headers'] = {name: _pi_value(value, credential_env)
+                               for name, value in settings['headers'].items()}
     return {'provider': name, 'model': model, 'connection': settings}, env
 
 
@@ -342,44 +376,58 @@ def _dsh(cwd, argv, env):
         raise ValueError('invalid dsh settings')
     profile = _option(argv, '--profile') or env.get('DSH_PROFILE', 'headless')
     profile_path = home / 'profiles' / profile / 'cordis.patch.yml'
+    roots = []
+    manifest = _json(profile_path.with_name('package.json'), optional=True)
+    bundles = manifest.get('dsh', {}).get('profile', {}).get('bundles', [])
+    if not isinstance(bundles, list):
+        raise ValueError('invalid dsh bundles')
+    binary = shutil.which(env.get('DSH_BIN', 'dsh'))
+    if bundles and not binary:
+        raise ValueError('dsh bundle configuration cannot be inspected')
+    package = Path(binary).resolve().parent.parent if binary else None
+    for bundle in bundles:
+        if not isinstance(bundle, str) or not re.fullmatch(r'@?[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?', bundle):
+            raise ValueError('dsh bundle path cannot be inspected')
+        roots.append(package / 'node_modules' / bundle / 'cordis.patch.yml')
+    roots.extend(path for path in (profile_path, home / 'cordis.patch.yml') if path.exists())
+    for index, arg in enumerate(argv):
+        if arg == '--':
+            break
+        if arg == '--patch':
+            if index + 1 >= len(argv):
+                raise ValueError('missing dsh patch path')
+            roots.append(cwd / argv[index + 1])
+        elif arg.startswith('--patch='):
+            roots.append(cwd / arg.split('=', 1)[1])
+
+    def entries(tree):
+        if not isinstance(tree, list):
+            raise ValueError('invalid dsh profile')
+        for entry in tree:
+            if not isinstance(entry, dict):
+                raise ValueError('invalid dsh profile row')
+            yield entry
+            if 'insert' in entry:
+                yield from entries(entry['insert'])
+
+    disabled = {}
+    for path in roots:
+        for entry in entries(_yaml(path)):
+            name = entry.get('id')
+            if name not in ('llm-pi-ai', 'agent-default-model', 'credentials'):
+                continue
+            if 'disabled' in entry:
+                disabled[name] = entry['disabled']
+            if 'config' in entry:
+                data[name] = entry['config']
+    if any(value is not False for value in disabled.values()):
+        raise ValueError('dsh provider selection is disabled or dynamic')
+    if any(not isinstance(data.get(name, {}), dict)
+           for name in ('llm-pi-ai', 'agent-default-model', 'credentials')):
+        raise ValueError('dynamic dsh provider configuration')
+    if any(key in data.get('credentials', {}) for key in ('path', 'dshHome')):
+        raise ValueError('custom dsh credential store cannot be inspected')
     default = data.get('agent-default-model', {})
-    if profile_path.exists():
-        roots = []
-        manifest = _json(profile_path.with_name('package.json'), optional=True)
-        bundles = manifest.get('dsh', {}).get('profile', {}).get('bundles', [])
-        binary = shutil.which(env.get('DSH_BIN', 'dsh'))
-        if bundles and not binary:
-            raise ValueError('dsh bundle configuration cannot be inspected')
-        package = Path(binary).resolve().parent.parent if binary else None
-        for bundle in bundles:
-            if not isinstance(bundle, str) or not re.fullmatch(r'@?[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?', bundle):
-                raise ValueError('dsh bundle path cannot be inspected')
-            roots.append(package / 'node_modules' / bundle / 'cordis.patch.yml')
-        roots.append(profile_path)
-
-        def entries(tree):
-            if not isinstance(tree, list):
-                raise ValueError('invalid dsh profile')
-            for entry in tree:
-                if not isinstance(entry, dict):
-                    raise ValueError('invalid dsh profile row')
-                yield entry
-                if 'insert' in entry:
-                    yield from entries(entry['insert'])
-
-        for path in roots:
-            for entry in entries(_yaml(path)):
-                name = entry.get('id')
-                if name in ('llm-pi-ai', 'agent-default-model') and 'config' in entry:
-                    # Cordis patches replace a row's complete config. A merge
-                    # would incorrectly retain old endpoint/credential fields.
-                    values = entry['config']
-                    if not isinstance(values, dict) or entry.get('disabled'):
-                        raise ValueError('dsh provider selection is disabled or dynamic')
-                    if name == 'llm-pi-ai':
-                        data[name] = values
-                    else:
-                        default = values
     llm = data.get('llm-pi-ai', {})
     model = _option(argv, '--model') or default.get('model') or llm.get('defaultModel') or llm.get('model')
     providers = llm.get('providers', {})

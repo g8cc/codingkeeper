@@ -333,7 +333,10 @@ def candidate(directory):
 
 def receipt_present(journal, line):
     try:
-        with journal.open('rb') as source:
+        fd = os.open(str(journal), os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+        with os.fdopen(fd, 'rb') as source:
+            if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+                raise ValueError('acceptance journal must be a regular file')
             return any(item == line.encode('utf-8') for item in source)
     except FileNotFoundError:
         return False
@@ -410,11 +413,14 @@ def recover_locked():
     # Commit queue, then journal. Pending is durable before either write. If the
     # second write fails, restore the task; after a crash this same protocol replays.
     try:
+        recorded = receipt_present(journal, tx['line'])
         if current != after:
             atomic(queue, after, tx['mode'])
-        if not receipt_present(journal, tx['line']):
-            fd = os.open(str(journal), os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        if not recorded:
+            fd = os.open(str(journal), os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
             try:
+                if not stat.S_ISREG(os.fstat(fd).st_mode):
+                    raise ValueError('acceptance journal must be a regular file')
                 data = tx['line'].encode('utf-8')
                 size = os.fstat(fd).st_size
                 if size and os.pread(fd, 1, size - 1) != b'\n':
@@ -434,7 +440,7 @@ def recover_locked():
         # an accepted receipt with an unchecked queue. Otherwise restore ready.
         try:
             recorded = receipt_present(journal, tx['line'])
-        except OSError:
+        except (OSError, ValueError):
             recorded = False
         if not recorded and read_queue(queue) == after:
             atomic(queue, before, tx['mode'])

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Check only the recorded parent/child PIDs of one integration fixture."""
 import argparse
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -37,6 +38,29 @@ def wait_exited(path, timeout=2):
     deadline = time.monotonic() + timeout
     while True:
         live = live_processes(pids)
+        if not live or time.monotonic() >= deadline:
+            return live
+        time.sleep(.05)
+
+
+def wait_watchers_exited(project, timeout=5):
+    groups = set()
+    for path in (Path(project) / '.codingkeeper').glob('watcher-*.json'):
+        process_id = json.loads(path.read_text())['pid']
+        if type(process_id) is not int or process_id <= 1:
+            raise ValueError('fixture watcher must record a positive process group')
+        groups.add(process_id)
+    if not groups:
+        return {}
+    deadline = time.monotonic() + timeout
+    while True:
+        result = subprocess.run(['ps', '-axo', 'pid=,pgid=,stat='], capture_output=True,
+                                text=True, timeout=3, check=True)
+        live = {}
+        for line in result.stdout.splitlines():
+            process_id, group, state = line.split()
+            if int(group) in groups and not state.startswith('Z'):
+                live[int(process_id)] = state
         if not live or time.monotonic() >= deadline:
             return live
         time.sleep(.05)

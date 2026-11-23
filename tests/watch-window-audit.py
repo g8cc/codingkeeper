@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Offline watchdog window regressions; probes and launches are always fakes."""
 import datetime as dt
+import json
 import os
 from pathlib import Path
 import re
@@ -270,6 +271,23 @@ class WatchWindowAudit(unittest.TestCase):
         self.assertEqual(result.stdout, "a=0 b=0 c=1 scans=0",
                          "cwd 命中=活, 未命中=死; 一次进程只扫一次 (数值计数器: 删除惰性缓存"
                          "本断言必须红 — b/c 的调用会重扫, scans≥1)")
+
+    def test_proj_alive_ignores_missing_or_nonabsolute_cwd(self):
+        other = self.root / 'verified-runner'
+        other.mkdir()
+        self.env['VERIFIED_RUNNER'] = str(other)
+        self.script('ps', '#!/bin/bash\nprintf "777 codexc-headless run\\n778 codexc-headless run\\n"\n')
+        self.script('lsof', '#!/bin/bash\n'
+                    'if [ "$3" = 777 ]; then printf "%s\\n" "$UNKNOWN_CWD"; exit 1; fi\n'
+                    'printf "p778\\nn%s\\n" "$VERIFIED_RUNNER"\n')
+        for unknown in ('', 'p777', 'p777\nn.', 'p777\nn/missing/runner/cwd'):
+            with self.subTest(lsof_output=unknown):
+                self.env['UNKNOWN_CWD'] = unknown
+                result = self.run_lib_shell('proj_alive "$PWD"; current=$?\n'
+                                            'proj_alive "$VERIFIED_RUNNER"; other=$?\n'
+                                            'printf "current=%s other=%s" "$current" "$other"\n')
+                self.assertEqual(result.stdout, 'current=1 other=0',
+                                 'missing or invalid cwd must not mark the watchdog directory alive')
 
     def test_patrol_rescans_runner_liveness_each_cycle(self):
         # 缓存按巡逻周期重置 — 必须在同一看门狗进程内跨两轮巡逻验证: 分进程
@@ -789,6 +807,48 @@ class WatchWindowAudit(unittest.TestCase):
         while not (self.root / 'launches').exists() and time.monotonic() < deadline:
             time.sleep(.01)
         self.assertIn('23:00-09:00|Asia/Singapore|', (self.root / 'launches').read_text())
+
+    def test_revived_runner_survives_watchdog_process_group_shutdown(self):
+        self.script('nohup', '#!/bin/bash\nexec /usr/bin/nohup "$@"\n')
+        self.script('zcodec', '#!' + sys.executable + '\n'
+                    'import json, os, time\nfrom pathlib import Path\n'
+                    'root = Path(os.environ["WATCH_ROOT"])\n'
+                    '(root / "runner-info").write_text(json.dumps({"pid": os.getpid(), '
+                    '"pgid": os.getpgrp(), "cwd": str(Path.cwd())}))\n'
+                    'while True:\n'
+                    '    (root / "runner-pulse").write_text(str(time.monotonic_ns()))\n'
+                    '    time.sleep(.05)\n')
+        watcher = subprocess.Popen(
+            ['/bin/bash', '-c', '. "$WATCH_SOURCE"\nrevive "$1"\nexec sleep 300',
+             'watchdog-test', self.furnace], cwd=self.root, env=self.env,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        self.processes.append(watcher)
+        runner_pid = None
+        try:
+            deadline = time.monotonic() + 10
+            while not (self.root / 'runner-pulse').exists() and time.monotonic() < deadline:
+                time.sleep(.05)
+            self.assertTrue((self.root / 'runner-pulse').exists(), 'fake runner did not start')
+            runner = json.loads((self.root / 'runner-info').read_text())
+            runner_pid = runner['pid']
+            self.assertEqual(Path(runner['cwd']).resolve(), Path(self.furnace).resolve())
+            self.assertNotEqual(runner['pgid'], watcher.pid,
+                                'revived runner shares the watchdog process group')
+            os.killpg(watcher.pid, signal.SIGTERM)
+            watcher.wait(timeout=5)
+            previous = (self.root / 'runner-pulse').read_text()
+            deadline = time.monotonic() + 3
+            while (self.root / 'runner-pulse').read_text() == previous and time.monotonic() < deadline:
+                time.sleep(.05)
+            self.assertNotEqual((self.root / 'runner-pulse').read_text(), previous,
+                                'runner stopped when watchdog group exited')
+            os.kill(runner_pid, 0)
+        finally:
+            if runner_pid is not None:
+                try:
+                    os.kill(runner_pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
 
     def test_invalid_policy_or_helper_failure_fails_closed(self):
         for config in ({"CODEXC_ACTIVE_WINDOW": "bad"}, {"CODEXC_ACTIVE_TZ": "invalid/timezone"},

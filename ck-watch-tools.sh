@@ -18,7 +18,16 @@ state, token, text = "none", "0", ""
 try:
     if tool == "opencode":
         with sqlite3.connect(Path(oc + "/opencode.db").resolve().as_uri() + "?mode=ro", uri=True) as conn:
-            row = conn.execute("SELECT type,seq,data FROM session_message WHERE session_id=? ORDER BY seq DESC LIMIT 1", (source,)).fetchone()
+            rows = conn.execute("SELECT type,seq,data FROM session_message WHERE session_id=? ORDER BY seq DESC LIMIT 2", (source,)).fetchall()
+        row = rows[0] if rows else None
+        if row and row[0] == "idle" and len(rows) == 2 and rows[1][0] == "assistant":
+            idle = json.loads(row[2])
+            previous = json.loads(rows[1][2])
+            if isinstance(idle, dict) and isinstance(previous, dict):
+                failed = bool(previous.get("error")) or previous.get("finish") == "error"
+                if ((failed and idle.get("outcome") == "failed") or
+                        (not failed and previous.get("finish") == "stop" and idle.get("outcome") == "succeeded")):
+                    row = rows[1]
         if row:
             kind, seq, raw = row
             token = hashlib.sha256((str(seq) + raw).encode()).hexdigest()

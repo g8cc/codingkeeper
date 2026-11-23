@@ -1,6 +1,12 @@
 # 工具矩阵与凭证（Tools & Credentials）
 
-本轮覆盖全部六种工具。下表表示离线协议与管控回归范围，真实服务与凭证未在本轮调用验证。历史在线验收和凭证失效记录不能代表当前状态。
+下表表示全部六种工具的离线协议与管控回归范围。2026-11-20 的
+[发布收敛](plans/2026-11-20-release-convergence.md) 已通过 Codex/OpenCode 的两轮真实
+响应和原会话续接；ZCode 同日早先通过。随后按用户授权
+[从 KeyDrop 恢复配置](plans/2026-11-20-keydrop-provider-recovery.md)，Claude、Pi、dsh
+也通过两轮真实响应、原会话续接及 Keeper 读取验证。
+此前的 HTTP401、504、429 等失败仍保留在各次记录中。结果对应各次验收时的配置，
+不表示服务持续健康，也不覆盖真实 TUI 输入、GUI 点击或在线 provider 故障切换。
 
 六工具的有效 provider 配置变更恢复使用共享适配层；四种 TUI 保留原 pane 并 exact resume，ZCode/dsh 在共享 headless turn 保留任务和 session。未知或模糊配置保留现场，具体路径、控制参数与真实服务边界见 [provider 自动恢复](PROVIDER-RECOVERY.md)。新增覆盖为 provider-config、provider-supervisor、provider-headless。
 
@@ -23,10 +29,32 @@ echo "Reply OK" | dsh --profile headless -     # dsh 钥匙快速自检
 pi -p 'Reply OK'                               # pi 钥匙快速自检
 ```
 
-## dsh 密钥说明
+## dsh 配置与密钥说明
 
-dsh 的 provider（keydrop-f6788e3a / keydrop-cparesid）配置在 `~/.dsh/settings.yaml`，
-key 经 `apiKeyEnv` 由 keydrop 工具动态注入；是否有效需另行在线验证。
+本机 dsh 0.2.1-rc.5 使用 Cordis profile/patch 配置，`DSH_HOME` 默认是 `~/.dsh`。
+配置按以下顺序叠加，后面的层优先：
+
+1. profile 的 `dsh.profile.bundles` 列表中的 bundle patch，按列表顺序加载。
+2. `$DSH_HOME/profiles/<profile>/cordis.patch.yml`，headless 对应 `<profile>=headless`。
+3. `$DSH_HOME/cordis.patch.yml`，适用于所有 profile，并覆盖各 profile 的同名配置。
+4. 命令行 `--patch <file>`，多个 overlay 按参数顺序叠加；应放在 `--json` 等应用参数之前。
+
+启动器的 telemetry 开关在上述配置层之后应用。
+`$DSH_HOME/settings.yaml` 是旧格式的一次性迁移输入：启动时先改名为
+`settings.yaml.imported`，再把各 section 导入当前 profile；未能导入的 section
+保留在该归档文件并记录警告。后续配置变更应写对应的 Cordis patch。
+
+provider（例如 `keydrop-f6788e3a` / `keydrop-cparesid`）位于 `id: llm-pi-ai`
+条目的 `config.providers` 字典，使用 `api`、`baseURL`、`models` 和 `apiKeyEnv`
+等字段。默认路由由 `id: agent-default-model` 条目的 `config.provider` 与
+`config.model` 成对选择，必须匹配已注册的 provider 和其模型 ID；只注册 provider
+不会改变默认选择。headless 新建和续接会话均读取本次配置中的这一对值。
+
+`apiKeyEnv` 填凭证引用名（如 `KEYDROP_API_KEY`，不带 `$`），设置该字段本身不会
+注入密钥。默认 headless profile 禁用 credentials 服务，引用值按“继承的进程环境
+→ 调用 cwd 的 `.env` → `$DSH_HOME/.env`”解析；KeyDrop 或调用方须实际提供相应值。
+若 profile/patch 显式启用 credentials 服务，`$DSH_HOME/.credentials.yaml` 中的
+引用值优先于上述环境来源。凭证是否有效仍需另行在线验证。
 认证失败形态: `dsh --profile headless -` 输出 `AUTH: Authentication Fails`。
 
 ## zcode 说明
@@ -34,6 +62,7 @@ key 经 `apiKeyEnv` 由 keydrop 工具动态注入；是否有效需另行在线
 - CLI 本体: 桌面应用自带 `/Applications/ZCode.app/Contents/Resources/glm/zcode.cjs`，
   用 Node >= 24 运行；`ZCODE_CJS` 可覆盖。
 - 会话库: `~/.zcode/cli/db/db.sqlite`（会话按 directory 字段绑定项目，只读查询）。
+- 配额生效提示按 `CODEXC_ACTIVE_TZ` 解析，只接受未来七天内的时间，支持跨年；非法时区保留 quota 分类但不猜测恢复 epoch。
 - 官方自动化文档: apps/zcode-cli/docs/usage（zai-org/ZCode 仓库）。
 
 ## 自动确认覆盖

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Offline watchdog tests with real JSONL/SQLite and a recorded tmux boundary."""
+import base64
 import json
 import os
 from pathlib import Path
@@ -129,6 +130,50 @@ watch_and_run_tool "$AUDIT_TOOL" "$$" '%1'
 
     def test_opencode_watchdog(self):
         self.exercise("opencode")
+
+    def opencode_snapshot(self, messages):
+        with sqlite3.connect(self.world / 'opencode.db') as connection:
+            connection.execute('CREATE TABLE IF NOT EXISTS session_message (session_id TEXT, type TEXT, seq INTEGER, data TEXT)')
+            connection.execute('DELETE FROM session_message')
+            connection.executemany('INSERT INTO session_message VALUES (?,?,?,?)',
+                                   [('s', kind, sequence, json.dumps(data)) for kind, sequence, data in messages])
+        result = subprocess.run(['bash', '-c', 'source "$1/ck-watch-tools.sh"; ck_tool_snapshot opencode s',
+                                 'snapshot', str(ROOT)], capture_output=True, text=True, timeout=10,
+                                env=dict(os.environ, OPENCODE_DIR=str(self.world)))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        state, token, encoded = result.stdout.rstrip('\n').split('\t')
+        return state, token, base64.b64decode(encoded).decode()
+
+    def test_opencode_idle_retains_completed_answer_and_event_identity(self):
+        message = ('assistant', 7, {'finish': 'stop', 'content': [{'type': 'text', 'text': 'finished'}]})
+        before = self.opencode_snapshot([message])
+        after = self.opencode_snapshot([message, ('idle', 11, {'outcome': 'succeeded'})])
+        self.assertEqual(after, before)
+        self.assertEqual((after[0], after[2]), ('clean', 'finished'))
+
+    def test_opencode_failed_idle_retains_provider_error(self):
+        message = ('assistant', 7, {'finish': 'error', 'error': {'data': {'statusCode': 429}}})
+        before = self.opencode_snapshot([message])
+        after = self.opencode_snapshot([message, ('idle', 11, {'outcome': 'failed'})])
+        self.assertEqual(after, before)
+        self.assertEqual(after[0], 'error')
+        self.assertIn('Too Many Requests', after[2])
+
+    def test_opencode_idle_does_not_replay_stale_or_unfinished_answers(self):
+        completed = ('assistant', 7, {'finish': 'stop', 'content': [{'type': 'text', 'text': 'old'}]})
+        cases = [
+            [completed, ('user', 12, {'text': 'new turn'})],
+            [completed, ('user', 12, {}), ('idle', 15, {'outcome': 'succeeded'})],
+            [completed, ('idle', 15, {'outcome': 'failed'})],
+            [completed, ('idle', 15, {'outcome': 'cancelled'})],
+            [completed, ('idle', 15, [])],
+            [completed, ('assistant', 12, {'content': []}), ('idle', 15, {'outcome': 'succeeded'})],
+            [completed, ('tool', 12, {}), ('idle', 15, {'outcome': 'succeeded'})],
+        ]
+        for messages in cases:
+            with self.subTest(messages=messages):
+                state, _token, text = self.opencode_snapshot(messages)
+                self.assertEqual((state, text), ('none', ''))
 
 
 if __name__ == "__main__":

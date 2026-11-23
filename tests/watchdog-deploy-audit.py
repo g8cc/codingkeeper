@@ -20,6 +20,9 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+from fixture_processes import live_processes
 
 ROOT = Path(os.environ.get('CK_AUDIT_SOURCE', Path(__file__).resolve().parents[1]))
 HOME = Path.home()
@@ -164,6 +167,64 @@ class WatchdogDeployAudit(unittest.TestCase):
         self.assertIn('$WATCH_DIR/ck-window.py', src)
         self.assertIn('bw_repo_dir', src)
 
+    def registry_scan(self, entries, temp_filter=None):
+        source = (ROOT / 'burn-watch.sh').read_text().split('\ncase "${1:-}" in\n')[0]
+        library = self.world / 'watch-library.sh'
+        library.write_text(source)
+        (self.home / '.codingkeeper/projects').write_text('\n'.join(map(str, entries)) + '\n')
+        alerts = self.home / '.codingkeeper/burn-ALERTS.txt'
+        alerts.unlink(missing_ok=True)
+        env = dict(os.environ, HOME=str(self.home), BURN_WATCH_NOTIFY='0')
+        env.pop('CODEXC_FLEET_TEMP_FILTER', None)
+        if temp_filter is not None:
+            env['CODEXC_FLEET_TEMP_FILTER'] = temp_filter
+        result = subprocess.run(['/bin/bash', '-c', '. "$1"\nfleet_trace_registry\nfleet_furnaces',
+                                 'registry-audit', str(library)], cwd=self.world, env=env,
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.splitlines(), alerts.read_text() if alerts.exists() else ''
+
+    def registry_fixture_entries(self):
+        missing = self.world / 'deleted-furnace'
+        noqueue = self.world / 'noqueue-furnace'
+        spaced = self.world / 'space furnace'
+        incomplete = self.world / 'incomplete-furnace'
+        complete = self.world / 'complete-furnace'
+        for project in (noqueue, spaced, incomplete, complete):
+            (project / '.codingkeeper').mkdir(parents=True)
+        for project in (incomplete, complete):
+            (project / '.codingkeeper/queue.md').touch()
+        for name in ('gate.sh', 'review-leaf.sh'):
+            (complete / '.codingkeeper' / name).touch()
+        return [project.resolve() for project in (missing, noqueue, spaced, incomplete, complete)]
+
+    def test_temporary_registry_entries_do_not_alert_when_incomplete(self):
+        entries = self.registry_fixture_entries()
+        entries.extend(Path(prefix) / self.world.name / 'deleted-furnace'
+                       for prefix in ('/tmp', '/private/tmp', '/var/tmp', '/private/var/tmp',
+                                      '/var/folders', '/private/var/folders'))
+        for temp_filter in (None, '1'):
+            with self.subTest(temp_filter=temp_filter):
+                furnaces, alerts = self.registry_scan(entries, temp_filter)
+                self.assertEqual(furnaces, [])
+                self.assertEqual(alerts, '', 'filtered temporary registry entries must remain silent')
+
+    def test_registry_temp_filter_override_preserves_diagnostics(self):
+        entries = self.registry_fixture_entries()
+        furnaces, alerts = self.registry_scan(entries, '0')
+        self.assertEqual(furnaces, [str(entries[-1])])
+        for diagnostic in ('目录不存在', '缺 queue.md', '含空白', 'scaffold 缺件'):
+            self.assertIn(diagnostic, alerts)
+
+    def test_registry_filter_preserves_similarly_named_roots(self):
+        entries = [Path(prefix + '-projects') / (self.world.name + prefix.replace('/', '-'))
+                   for prefix in ('/tmp', '/private/tmp', '/var/tmp', '/private/var/tmp',
+                                  '/var/folders', '/private/var/folders')]
+        furnaces, alerts = self.registry_scan(entries)
+        self.assertEqual(furnaces, [])
+        for entry in entries:
+            self.assertIn(str(entry), alerts)
+
     def test_furnace_gate_propagates_pytest_result(self):
         project = self.world / 'python project'
         project.mkdir()
@@ -268,6 +329,40 @@ class WatchdogDeployAudit(unittest.TestCase):
 
     # ---- 进程级回归: __locked-run 在 fd 9 开启 (未持锁) 时必须存活 ----
 
+    def test_revived_runner_fixture_cleans_up_on_success_and_failure(self):
+        other = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'],
+                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL, start_new_session=True)
+        self.processes.append(other)
+        for inject_failure in (False, True):
+            with self.subTest(inject_failure=inject_failure):
+                fixture = WatchdogDeployAudit('test_real_revived_runner_does_not_inherit_watchdog_lock_descriptors')
+                fixture.setUp()
+                record = fixture.world / 'runner-fds.json'
+                runner_pid = None
+                try:
+                    try:
+                        if inject_failure:
+                            with patch.object(fixture, 'assertEqual', side_effect=AssertionError('injected fixture failure')):
+                                with self.assertRaisesRegex(AssertionError, 'injected fixture failure'):
+                                    fixture.test_real_revived_runner_does_not_inherit_watchdog_lock_descriptors()
+                        else:
+                            fixture.test_real_revived_runner_does_not_inherit_watchdog_lock_descriptors()
+                    finally:
+                        if record.exists():
+                            runner_pid = json.loads(record.read_text())['pid']
+                        fixture.tearDown()
+                    self.assertIsNotNone(runner_pid, 'fixture must publish its fake runner PID')
+                    self.assertEqual(live_processes({runner_pid}), {},
+                                     'detached fake runner survived fixture cleanup')
+                    self.assertIsNone(other.poll(), 'cleanup must preserve another fixture')
+                finally:
+                    if runner_pid is not None and live_processes({runner_pid}):
+                        try:
+                            os.kill(runner_pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+
     def test_real_revived_runner_does_not_inherit_watchdog_lock_descriptors(self):
         project = self.world / 'real-revive'
         state = project / '.codingkeeper'
@@ -285,7 +380,10 @@ class WatchdogDeployAudit(unittest.TestCase):
                         'for fd in range(9,13):\n'
                         '    try: os.fstat(fd); fds.append(fd)\n'
                         '    except OSError: pass\n'
-                        'Path(os.environ["FD_RECORD"]).write_text(json.dumps({"pid":os.getpid(),"fds":fds}))\n'
+                        'record=Path(os.environ["FD_RECORD"])\n'
+                        'temporary=record.with_suffix(".tmp")\n'
+                        'temporary.write_text(json.dumps({"pid":os.getpid(),"fds":fds}))\n'
+                        'temporary.replace(record)\n'
                         'time.sleep(60)\n')
         fake.chmod(0o755)
         env = {**os.environ, 'HOME': str(self.home), 'PATH': str(bindir) + ':' + os.environ['PATH'],
@@ -321,6 +419,21 @@ class WatchdogDeployAudit(unittest.TestCase):
         finally:
             try: os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError: pass
+            process.wait(timeout=5)
+            if record.exists():
+                runner_pid = json.loads(record.read_text())['pid']
+                if type(runner_pid) is not int or runner_pid <= 1:
+                    raise ValueError('fixture must record its fake runner PID')
+                try:
+                    os.kill(runner_pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                deadline = time.monotonic() + 3
+                survivors = live_processes({runner_pid})
+                while survivors and time.monotonic() < deadline:
+                    time.sleep(.05)
+                    survivors = live_processes({runner_pid})
+                self.assertFalse(survivors, 'detached fake runner survived cleanup')
 
     def test_locked_run_survives_with_open_fd9(self):
         env = dict(os.environ, HOME=str(self.home))

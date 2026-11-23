@@ -2,12 +2,15 @@
 """Offline quota classification regressions against a fake ZCode process."""
 import json
 import datetime as dt
+import importlib.util
 import os
 from pathlib import Path
 import subprocess
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 REPO = Path(__file__).resolve().parent.parent
 NOTICE = ("额度已领到（12,345 token），11-05 23:00 起生效，还有约 100 分钟。\n\n"
@@ -116,6 +119,35 @@ class ZcodeQuotaAudit(unittest.TestCase):
         marker = [line for line in result.stdout.splitlines() if line.startswith("CK_QUOTA_UNTIL: ")]
         self.assertEqual(len(marker), 1)
         self.assertGreater(int(marker[0].split(":", 1)[1].strip()), 0)
+
+    def test_package_notice_resolves_nearby_new_year_without_accepting_stale_dates(self):
+        spec = importlib.util.spec_from_file_location('quota_session', REPO / 'ck-zcode-session.py')
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        datetime_type = dt.datetime
+        zone = ZoneInfo('Asia/Shanghai')
+        current = datetime_type(2026, 12, 31, 23, 30, tzinfo=zone)
+
+        class Clock(datetime_type):
+            @classmethod
+            def now(cls, tz=None):
+                return current.astimezone(tz)
+
+        with patch.object(helper.dt, 'datetime', Clock), patch.dict(os.environ, CODEXC_ACTIVE_TZ='Asia/Shanghai'):
+            cases = [('01-01 00:01', datetime_type(2027, 1, 1, 0, 1, tzinfo=zone)),
+                     ('12-31 23:45', datetime_type(2026, 12, 31, 23, 45, tzinfo=zone)),
+                     ('12-30 23:00', None), ('01-20 00:01', None), ('02-30 23:00', None)]
+            for date_text, expected in cases:
+                with self.subTest(date_text=date_text):
+                    actual = helper.notice_reset_epoch(NOTICE.replace('11-05 23:00', date_text))
+                    self.assertEqual(actual, int(expected.timestamp()) if expected else None)
+
+    def test_invalid_timezone_preserves_quota_classification(self):
+        self.env['CODEXC_ACTIVE_TZ'] = 'invalid/timezone'
+        result = self.run_worker(self.response(NOTICE))
+        self.assert_error(result, 'quota')
+        self.assertNotIn('CK_QUOTA_UNTIL:', result.stdout)
+        self.assertNotIn('Traceback', result.stderr)
 
     def test_unrelated_number_in_failure_is_not_a_provider_code(self):
         self.assert_error(self.run_worker("", "build failed at example1006:120", 1), "unknown")

@@ -406,6 +406,12 @@ gate_run() {  # $1=outfile; 0=pass
         printf '\n[gate interrupted: %s]\n' "$CK_WINDOW_REASON" >> "$outfile"
         return 125
     fi
+    case "$rc" in
+        125|126)
+            printf '\n[gate process exited with status %s]\n' "$rc" >> "$outfile"
+            return 1
+            ;;
+    esac
     return "$rc"
 }
 

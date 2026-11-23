@@ -14,6 +14,9 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
+
+from fixture_processes import live_processes, wait_watchers_exited
 
 ROOT = Path(__file__).resolve().parents[1]
 SUPERVISOR = ROOT / 'ck-tool-supervisor.py'
@@ -110,6 +113,7 @@ def stop(s,f):
 signal.signal(signal.SIGTERM,stop)
 signal.signal(signal.SIGINT,stop)
 signal.signal(signal.SIGHUP,stop)
+(p.parent/('child-ready-'+str(os.getpid()))).touch()
 while True:time.sleep(.05)
 ''')
         code = r'''#!PYTHON
@@ -253,8 +257,8 @@ while True:
                                         cwd=self.project, env=self.environment, stdout=self.output,
                                         stderr=subprocess.STDOUT, stdin=subprocess.PIPE, start_new_session=True)
         self.wait_for(lambda: len(self.starts()) == 1, 'initial CLI did not start')
-        # Children install signal handlers before any recovery can be requested.
-        time.sleep(.1)
+        child_ready = self.world / ('child-ready-' + str(self.starts()[0]['child']))
+        self.wait_for(child_ready.exists, 'CLI descendant did not install its signal handlers')
 
     def event(self, text='usage limit exhausted', source=None, token='event-1', state='error', **env):
         args = [sys.executable, str(SUPERVISOR), 'record', self.tool, '%17', self.owner,
@@ -462,6 +466,7 @@ while True:
         stopped = self.world / 'child-stopped'
         self.assertTrue(stopped.exists(), 'supervisor left its CLI child alive')
         self.assertIn(str(first['child']), stopped.read_text().splitlines())
+        self.assert_owned_processes_stopped(first)
 
     def test_sigint_reaps_owned_cli_and_descendant(self):
         self.start()
@@ -471,6 +476,29 @@ while True:
         stopped = self.world / 'child-stopped'
         self.assertTrue(stopped.exists(), 'interrupted supervisor left its CLI child alive')
         self.assertIn(str(first['child']), stopped.read_text().splitlines())
+        self.assert_owned_processes_stopped(first)
+
+    def assert_owned_processes_stopped(self, first):
+        self.assertEqual(live_processes({first['pid'], first['child']}), {},
+                         'owned CLI or descendant is still running')
+
+    def test_owned_exit_check_rejects_ps_errors(self):
+        first = {'pid': os.getpid(), 'child': os.getpid()}
+        for returncode, diagnostic in ((2, ''), (1, 'cannot inspect processes'),
+                                       (0, 'incomplete process listing'), (-signal.SIGKILL, '')):
+            with self.subTest(returncode=returncode, diagnostic=diagnostic):
+                result = subprocess.CompletedProcess(['ps'], returncode, 'Z\n', diagnostic)
+                with patch('subprocess.run', return_value=result):
+                    with self.assertRaises((AssertionError, RuntimeError)):
+                        self.assert_owned_processes_stopped(first)
+
+    def test_owned_exit_check_accepts_absence_and_rejects_live_process(self):
+        first = {'pid': os.getpid(), 'child': os.getpid()}
+        with self.assertRaises(AssertionError):
+            self.assert_owned_processes_stopped(first)
+        result = subprocess.CompletedProcess(['ps'], 1, '', '')
+        with patch('subprocess.run', return_value=result):
+            self.assert_owned_processes_stopped(first)
 
     def test_waiting_requires_current_live_owner_source_and_fresh_heartbeat(self):
         self.start()
@@ -497,6 +525,16 @@ while True:
         finally:
             (self.world / 'wrong-owner').unlink(missing_ok=True)
             os.kill(self.process.pid, signal.SIGCONT)
+
+    def test_sigint_reaps_slow_starting_owned_descendant(self):
+        child = self.world / 'child.py'
+        child.write_text('import time\ntime.sleep(1)\n' + child.read_text())
+        self.test_sigint_reaps_owned_cli_and_descendant()
+
+    def test_sigterm_reaps_slow_starting_owned_descendant(self):
+        child = self.world / 'child.py'
+        child.write_text('import time\ntime.sleep(1)\n' + child.read_text())
+        self.test_sigterm_reaps_owned_cli_and_descendant()
 
     def append_terminal(self, tool, clean=False):
         if tool == 'codex':
@@ -547,7 +585,7 @@ while True:
                                 CODEXC_COOLDOWN='0', CODEXC_NIGHT_IDLE='0', CODEXC_ACTIVE_WINDOW='')
         if loop_wait:
             self.environment.update(CODEXC_LOOP_STALL='5', CODEXC_LOOP_POLL='1', CODEXC_LOOP_IDLE='0',
-                                    CODEXC_REQUIRE_GATE='0', CODEXC_LOOP_NOTIFY='0')
+                                    CODEXC_REQUIRE_GATE='0', CODEXC_LOOP_NOTIFY='0', CODEXC_TURN_TIMEOUT='10')
             (self.project / '.gitignore').write_text('.codingkeeper/\n')
             (self.project / 'base.txt').write_text('fixture baseline\n')
             git_env = dict(self.environment, GIT_AUTHOR_NAME='Provider Test', GIT_AUTHOR_EMAIL='test@example.invalid',
@@ -562,6 +600,10 @@ while True:
         def tmux(*args):
             return subprocess.run([str(wrapper), *args], env=self.environment, text=True,
                                   capture_output=True, timeout=8)
+        def wait_watchers():
+            self.assertEqual(wait_watchers_exited(self.project), {},
+                             'private watcher processes survived tmux shutdown')
+        self.addCleanup(wait_watchers)
         self.addCleanup(lambda: tmux('kill-server'))
         bootstrap = tmux('-f', '/dev/null', 'new-session', '-d', '-s', 'anchor', 'sleep 60')
         self.assertEqual(bootstrap.returncode, 0, bootstrap.stderr)
@@ -594,9 +636,9 @@ while True:
                     except (OSError, ValueError):
                         return False
                 self.wait_for(waiting_status, 'delivery loop did not enter provider waiting')
-                time.sleep(6)
+                time.sleep(12)
                 self.assertFalse((self.project / '.codingkeeper/loop.halt').exists(),
-                                 'provider waiting incorrectly hit the five-second stall deadline')
+                                 'provider waiting incorrectly exhausted the stall or turn deadline')
                 self.configure(tool, 'new')
             self.wait_for(lambda: len(self.starts()) == 2,
                           'watcher did not request automatic ' + tool + ' provider handoff', timeout=12)
@@ -641,6 +683,7 @@ while True:
                 except subprocess.TimeoutExpired:
                     self.process.kill()
                     self.process.wait(timeout=5)
+            wait_watchers()
 
     def test_private_codex_watcher_handoff_and_recovery_confirmation(self):
         self.exercise_private_tmux('codex')
@@ -660,7 +703,42 @@ while True:
     def test_private_opencode_xdg_data_directory_handoff(self):
         self.exercise_private_tmux('opencode', alternate_home=True)
 
-    def test_private_delivery_loop_waits_past_stall_then_resumes_same_task(self):
+    def test_private_handoff_waits_for_detached_status_writer(self):
+        marker = self.world / 'status-writer.pid'
+        wrapper = self.bin / 'python3'
+        wrapper.write_text('#!' + sys.executable + '\n' + r'''
+import os, signal, sys, time
+from pathlib import Path
+if len(sys.argv) > 3 and sys.argv[1] == '-' and sys.argv[3] == 'recovered task completed':
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    (Path(os.environ['AUDIT_WORLD']) / 'status-writer.pid').write_text(str(os.getpid()))
+    time.sleep(2)
+os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
+''')
+        wrapper.chmod(0o755)
+        original_wait = self.wait_for
+
+        def wait_for(condition, explanation, timeout=7):
+            original_wait(condition, explanation, timeout)
+            if explanation.startswith('restored opencode completion'):
+                original_wait(marker.exists, 'delayed status writer did not start')
+
+        self.wait_for = wait_for
+        try:
+            self.exercise_private_tmux('opencode', alternate_home=True)
+            self.assertTrue(marker.exists())
+            self.assertEqual(live_processes({int(marker.read_text())}), {},
+                             'fixture returned while its detached status writer was still running')
+        finally:
+            if marker.exists():
+                for process_id in live_processes({int(marker.read_text())}):
+                    try:
+                        os.kill(process_id, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+
+    def test_private_delivery_loop_waits_past_stall_and_turn_deadline_then_resumes_same_task(self):
         self.exercise_private_tmux('codex', loop_wait=True)
 
 

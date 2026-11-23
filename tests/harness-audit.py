@@ -273,6 +273,21 @@ class FixtureProcessIsolationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.checker.wait_exited(pids)
 
+    def test_watcher_cleanup_waits_for_child_after_group_leader_exits(self):
+        own, pids = self.fixture('watcher')
+        other, _ = self.fixture('other-watcher')
+        state = self.root / '.codingkeeper'
+        state.mkdir()
+        (state / 'watcher-1.json').write_text(json.dumps({'pid': own.pid}))
+        own.kill()
+        own.wait(timeout=3)
+        live = self.checker.wait_watchers_exited(self.root, timeout=.1)
+        self.assertEqual(set(live), self.checker.read_fixture_pids(pids) - {own.pid})
+        for process_id in live:
+            os.kill(process_id, signal.SIGTERM)
+        self.assertEqual(self.checker.wait_watchers_exited(self.root), {})
+        self.assertIsNone(other.poll(), 'another fixture must not affect watcher cleanup')
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -236,6 +236,37 @@ run_runner
         self.assertTrue((self.state / 'acceptance.pending.json').exists())
         self.assertTrue((self.state / 'loop.halt').exists())
 
+    def test_fifo_journal_rejects_acceptance_without_blocking(self):
+        directory = self.helper('begin', 'dGFzaw==').stdout.strip()
+        self.helper('candidate', directory)
+        os.mkfifo(self.state / 'journal')
+        result = subprocess.run(
+            ['python3', str(ROOT / 'ck-leaf.py'), 'accept', directory, 'dGFzaw==', 'accepted'],
+            cwd=self.world, env=self.env, text=True, capture_output=True, timeout=3)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn('- [ ] task', self.queue.read_text())
+        self.assertTrue((self.state / 'acceptance.pending.json').exists())
+        self.assertFalse((Path(directory) / 'accepted.json').exists())
+
+    def test_recovery_does_not_trust_receipt_through_journal_symlink(self):
+        directory = self.helper('begin', 'dGFzaw==').stdout.strip()
+        self.helper('candidate', directory)
+        journal = self.state / 'journal'
+        journal.mkdir()
+        self.helper('accept', directory, 'dGFzaw==', 'accepted', check=False)
+        pending = self.state / 'acceptance.pending.json'
+        transaction = json.loads(pending.read_text())
+        journal.rmdir()
+        outside = self.world / 'outside-journal'
+        outside.write_text(transaction['line'])
+        journal.symlink_to(outside)
+        result = self.helper('recover', check=False)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn('- [ ] task', self.queue.read_text())
+        self.assertTrue(pending.exists())
+        self.assertFalse((Path(directory) / 'accepted.json').exists())
+        self.assertEqual(outside.read_text(), transaction['line'])
+
     def test_recovery_after_queue_write_is_idempotent_and_repairs_partial_line(self):
         directory = self.helper('begin', 'dGFzaw==').stdout.strip()
         self.helper('candidate', directory)

@@ -392,12 +392,21 @@ sid, db, msg_out = sys.argv[1], sys.argv[2], sys.argv[3]
 status = "none"
 try:
     from pathlib import Path
-    conn = sqlite3.connect(Path(db).resolve().as_uri() + "?mode=ro", uri=True)
-    row = conn.execute(
-        "SELECT data, seq FROM session_message WHERE session_id=? AND type='assistant' "
-        "ORDER BY seq DESC LIMIT 1", (sid,)).fetchone()
-    if row:
-        d = json.loads(row[0])
+    with sqlite3.connect(Path(db).resolve().as_uri() + "?mode=ro", uri=True) as conn:
+        rows = conn.execute(
+            "SELECT type, seq, data FROM session_message WHERE session_id=? "
+            "ORDER BY seq DESC LIMIT 2", (sid,)).fetchall()
+    row = rows[0] if rows else None
+    if row and row[0] == "idle" and len(rows) == 2 and rows[1][0] == "assistant":
+        idle = json.loads(row[2])
+        previous = json.loads(rows[1][2])
+        if isinstance(idle, dict) and isinstance(previous, dict):
+            failed = bool(previous.get("error")) or previous.get("finish") == "error"
+            if ((failed and idle.get("outcome") == "failed") or
+                    (not failed and previous.get("finish") == "stop" and idle.get("outcome") == "succeeded")):
+                row = rows[1]
+    if row and row[0] == "assistant":
+        d = json.loads(row[2])
         if not isinstance(d, dict):
             print("none")
             raise SystemExit(0)
@@ -472,6 +481,7 @@ feed_turn() {
     busy_path="$last_path"; busy_size="$last_size"
     feed_started=$(date +%s)
     last_progress_ts=$feed_started
+    provider_wait_at=0; provider_wait_seconds=0
     feed_msg "$pane" "$1"
 }
 
@@ -496,6 +506,7 @@ run_driver() {  # $1=pane
     # otherwise a previous task's stale completion could be accepted when a
     # fed turn dies without emitting its own terminal event
     local feed_size=0 feed_path="" feed_started=0 busy_path="" busy_size=0
+    local provider_wait_at=0 provider_wait_seconds=0 provider_waiting=0 turn_now=0
     # turn_status 结果缓存: rollout 只追加不改写, (路径,大小) 相同则状态必然
     # 相同 — 跳过整文件重扫 (长会话 rollout 可达数十 MB, 此前每个轮询全量读)
     local sts_path="" sts_size=-1 sts_val=""
@@ -530,6 +541,7 @@ run_driver() {  # $1=pane
         sleep "$CODEXC_LOOP_POLL"
 
         if [ -e ".codingkeeper/loop.halt" ]; then
+            provider_wait_at=0
             if [ "$halted_logged" = "0" ]; then
                 banner_set "⛔ 已挂起: rm .codingkeeper/loop.halt 复燃"
                 log "halted: .codingkeeper/loop.halt present (rm it to resume)"
@@ -539,6 +551,7 @@ run_driver() {  # $1=pane
         fi
         halted_logged=0
         if ! ck_run_check; then
+            provider_wait_at=0
             if [ "$mode" = task ] && [ "$phase" = work ]; then
                 tmux send-keys -t "$pane" C-c 2>/dev/null || true
                 mode="idle"; phase=""; CK_TURN_TS=0
@@ -552,6 +565,7 @@ run_driver() {  # $1=pane
         fi
 
         if [ "$mode" = "halt" ]; then
+            provider_wait_at=0
             if [ ! -e ".codingkeeper/loop.halt" ]; then
                 CK_TURN_TS=0   # 复燃横幅是 active 态, 不带上一任务的陈旧起点
                 banner_set "🔥 复燃: 继续燃烧"
@@ -561,16 +575,40 @@ run_driver() {  # $1=pane
             continue
         fi
 
-        if [ "$mode" = "task" ] && [ "$phase" = "work" ] && [ "$feed_started" -gt 0 ] && [ $(( $(date +%s) - feed_started )) -ge "$CODEXC_TURN_TIMEOUT" ]; then
-            log "parked: worker turn exceeded ${CODEXC_TURN_TIMEOUT}s"
-            notify "循环挂起: 回合超过 ${CODEXC_TURN_TIMEOUT}s — $task"
-            mode="halt"; phase=""
-            touch ".codingkeeper/loop.halt"
-            continue
+        if [ "$mode" = "task" ]; then
+            rollout="$(find_rollout "$pane")"
         fi
+        if [ "$mode" = "task" ] && [ "$phase" = "work" ] && [ "$feed_started" -gt 0 ]; then
+            turn_now=$(date +%s)
+            provider_waiting=0
+            if [ -n "${CK_PROVIDER_GENERATION:-}" ] && [ -n "$feed_path" ] && [ "$rollout" = "$feed_path" ] &&
+               python3 "$CK_COMMON_DIR/ck-tool-supervisor.py" waiting "$CODEXC_TOOL" "$pane" \
+                 "$(tmux show-option -p -v -t "$pane" @codexc_owner 2>/dev/null)" "$rollout" 2>/dev/null; then
+                provider_waiting=1
+                if [ "$provider_wait_at" -gt 0 ] && [ "$turn_now" -gt "$provider_wait_at" ]; then
+                    provider_wait_seconds=$((provider_wait_seconds + turn_now - provider_wait_at))
+                fi
+            fi
+            if [ $((turn_now - feed_started - provider_wait_seconds)) -ge "$CODEXC_TURN_TIMEOUT" ]; then
+                log "parked: worker turn exceeded ${CODEXC_TURN_TIMEOUT}s"
+                notify "循环挂起: 回合超过 ${CODEXC_TURN_TIMEOUT}s — $task"
+                mode="halt"; phase=""
+                touch ".codingkeeper/loop.halt"
+                continue
+            fi
+            if [ "$provider_waiting" = 1 ]; then
+                provider_wait_at=$turn_now
+                last_progress_ts=$turn_now; errored_since=0
+                status_write "上游不可用，等待有效 provider 配置变更" "$CODEXC_TOOL" 0 0 waiting_provider 0
+                continue
+            fi
+            if [ "$provider_wait_at" -gt 0 ]; then
+                status_write "📋 $task ｜ 执行恢复" "$CODEXC_TOOL" 1 "${CK_TURN_TS:-0}" working 0
+            fi
+        fi
+        provider_wait_at=0
         if ! pane_idle "$pane"; then
             if [ "$mode" = "task" ]; then
-                rollout="$(find_rollout "$pane")"
                 cur_size="$(rollout_size "$rollout")"
                 if [ "$rollout" != "$busy_path" ] || [ "$cur_size" != "$busy_size" ]; then
                     last_progress_ts=$(date +%s)
@@ -661,7 +699,6 @@ run_driver() {  # $1=pane
 
         # Inspect progress before applying the stall timeout: a long turn may
         # have finished while the TUI was busy for more than LOOP_STALL.
-        rollout="$(find_rollout "$pane")"
         cur_size=$(rollout_size "$rollout")
         if [ "$rollout" != "$last_path" ] || [ "$cur_size" != "$last_size" ]; then
             activity=1
@@ -669,23 +706,14 @@ run_driver() {  # $1=pane
         else
             activity=0
         fi
-        # Provider waiting is a live, supervised pause, not a stalled task.
-        # Require this run's generation and the exact rollout already fed.
-        if [ -n "${CK_PROVIDER_GENERATION:-}" ] && [ -n "$feed_path" ] && [ "$rollout" = "$feed_path" ] &&
-           python3 "$CK_COMMON_DIR/ck-tool-supervisor.py" waiting "$CODEXC_TOOL" "$pane" \
-             "$(tmux show-option -p -v -t "$pane" @codexc_owner 2>/dev/null)" "$rollout" 2>/dev/null; then
-            last_progress_ts=$(date +%s); errored_since=0
-            status_write "上游不可用，等待有效 provider 配置变更" "$CODEXC_TOOL" 0 0 waiting_provider 0
-            continue
-        fi
-        if [ $(( $(date +%s) - last_progress_ts )) -ge "$CODEXC_LOOP_STALL" ]; then
+        if [ "$phase" = work ] && [ $(( $(date +%s) - last_progress_ts )) -ge "$CODEXC_LOOP_STALL" ]; then
             notify "循环挂起: 投喂后 ${CODEXC_LOOP_STALL}s 无进展 — 请检查 TUI ($task)"
             log "parked: no rollout progress for ${CODEXC_LOOP_STALL}s after feed"
             mode="halt"; phase=""
             touch ".codingkeeper/loop.halt"
             continue
         fi
-        if [ -z "$rollout" ]; then
+        if [ -z "$rollout" ] && [ "$phase" = work ]; then
             continue
         fi
         if [ -n "$feed_path" ] && [ "$rollout" != "$feed_path" ]; then
@@ -695,7 +723,7 @@ run_driver() {  # $1=pane
             continue
         fi
         last_path="$rollout"; last_size="$cur_size"
-        if [ "$rollout" = "$sts_path" ] && [ "$cur_size" = "$sts_size" ] && [ -n "$sts_val" ]; then
+        if [ "$phase" = work ] && [ "$rollout" = "$sts_path" ] && [ "$cur_size" = "$sts_size" ] && [ -n "$sts_val" ]; then
             status="$sts_val"   # 文件未增长 → 状态不变, 复用上次解析 (msgfile 内容亦未变)
         else
             : > "$msgfile"
@@ -704,6 +732,12 @@ run_driver() {  # $1=pane
         fi
         case "$status" in
             none)
+                if [ "$phase" != work ]; then
+                    log "parked: completion evidence unavailable during $phase"
+                    python3 "$CK_COMMON_DIR/ck-leaf.py" halt "completion evidence unavailable during $phase" || return 1
+                    mode="halt"; phase=""
+                    continue
+                fi
                 log "turn outcome not visible yet; waiting"
                 continue
                 ;;
@@ -804,12 +838,14 @@ run_driver() {  # $1=pane
                 ;;
         esac
 
-        if [ "$phase" = "work" ]; then
+        if [ "$phase" = "work" ] || [ "$phase" = "gate" ]; then
             phase="gate"
+            banner_set "🔧 gate 验收中 — $task"
+            status_write "🔧 gate 验收中 — $task" "$CODEXC_TOOL" 1 "${CK_TURN_TS:-0}" gate 0
             leaf_gate_run "$gate_out"
             rc=$?
             last_progress_ts=$(date +%s)
-            [ "$rc" != 125 ] || { phase="work"; continue; }
+            [ "$rc" != 125 ] || continue
             if [ "$rc" = 126 ]; then
                 log "parked: gate candidate changed or evidence failed"
                 mode="halt"; touch .codingkeeper/loop.halt
@@ -834,7 +870,6 @@ run_driver() {  # $1=pane
                 phase="work"
                 continue
             fi
-            banner_set "🔍 独立审查中 (streak $zero_streak/$CODEXC_REVIEW_PASS) — $task"
             log "gate passed; starting review (streak $zero_streak/$CODEXC_REVIEW_PASS)"
             phase="review"
         fi
@@ -848,9 +883,16 @@ run_driver() {  # $1=pane
                 touch ".codingkeeper/loop.halt"
                 continue
             fi
+            banner_set "🔍 独立审查中 (streak $zero_streak/$CODEXC_REVIEW_PASS) — $task"
+            status_write "🔍 独立审查中 (streak $zero_streak/$CODEXC_REVIEW_PASS) — $task" "$CODEXC_TOOL" 1 "${CK_TURN_TS:-0}" review 0
             review_collect "$task" "$review_out"
+            rc=$?
             bugs="$REVIEW_RESULT"
             last_progress_ts=$(date +%s)
+            if [ "$rc" = 125 ]; then
+                review_rounds=$((review_rounds - 1))
+                continue
+            fi
             if [ "$bugs" = "timeout" ]; then
                 notify "循环挂起: 审查超时 (${CODEXC_REVIEW_TIMEOUT}s) — $task"
                 log "parked: review timed out (tail: $(review_tail "$review_out"))"

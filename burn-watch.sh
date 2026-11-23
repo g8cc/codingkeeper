@@ -32,6 +32,14 @@ CODEXC_DISK_MIN_GB="${CODEXC_DISK_MIN_GB:-10}"  # HOME 所在卷可用 GiB 低�
 # 限长 9 位: 超长数字串会在 $(( )) 溢出报错、前导零被八进制误读 — 一并兜底
 case "${CODEXC_FLEET_MAX}" in ''|*[!0-9]*|??????????*) CODEXC_FLEET_MAX=6 ;; esac
 case "${CODEXC_DISK_MIN_GB}" in ''|*[!0-9]*|??????????*) CODEXC_DISK_MIN_GB=10 ;; esac
+fleet_temp_filtered() {
+    [ "${CODEXC_FLEET_TEMP_FILTER:-1}" = "1" ] || return 1
+    case "${1%/}/" in
+        /tmp/*|/private/tmp/*|/var/tmp/*|/private/var/tmp/*|/var/folders/*|/private/var/folders/*) return 0 ;;
+    esac
+    return 1
+}
+
 fleet_furnaces() {
     local p
     [ -f "$HOME/.codingkeeper/projects" ] || return 0
@@ -47,11 +55,7 @@ fleet_furnaces() {
         # 若因历史残留落进注册表, 巡逻静默跳过 — 不烧、不告警 (无限重复的
         # scaffold 告警对无法自愈的死条目毫无意义)。旗标默认开; 测试装置
         # (fixture 在临时根下) 用 CODEXC_FLEET_TEMP_FILTER=0 让位。
-        if [ "${CODEXC_FLEET_TEMP_FILTER:-1}" = "1" ]; then
-            case "$p/" in
-                /tmp/*|/private/tmp/*|/var/tmp/*|/private/var/tmp/*|/var/folders/*|/private/var/folders/*) continue ;;
-            esac
-        fi
+        fleet_temp_filtered "$p" && continue
         case " $FLEET_EXCLUDE " in *" ${p##*/} "*) continue ;; esac
         [ -f "$p/.codingkeeper/queue.md" ] || continue
         if [ ! -f "$p/.codingkeeper/gate.sh" ] || [ ! -f "$p/.codingkeeper/review-leaf.sh" ]; then
@@ -73,6 +77,7 @@ fleet_trace_registry() {  # 注册表死条目/空白路径/缺 queue.md 的留�
         p="${p%/}"
         [ -z "$p" ] && continue                     # 空行是注册表合法语法
         case "$p" in \#*) continue ;; esac          # 注释掉条目 = 可用的暂停手段
+        fleet_temp_filtered "$p" && continue
         case " $FLEET_EXCLUDE " in *" ${p##*/} "*) continue ;; esac  # 主动除名 = 静默
         case "$p" in
             # 去重键含全路径: 共用常量键会让同日第二条空白条目永无留档
@@ -109,6 +114,7 @@ proj_alive_scan() {  # 惰性: 首个 pid 文件未命中的炉子触发; patrol
     # 字节透明枚举; [c] 类括号自排除, 避免匹配到枚举进程自身
     for rpid in $(LC_ALL=C ps ax -o pid=,command= 2>/dev/null | LC_ALL=C awk '/[c]odexc-headless run/ { print $1 }'); do
         rcwd="$(lsof -a -p "$rpid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p')"
+        case "$rcwd" in /*) ;; *) continue ;; esac
         rcwd="$(cd "$rcwd" 2>/dev/null && pwd -P)" || continue
         PROJ_ALIVE_CWDS="$PROJ_ALIVE_CWDS$rcwd "
     done
@@ -241,11 +247,15 @@ revive() {  # $1=proj — 有界、保留 halt 的 nohup 复燃 (注册表驱动
     [ ! -e "$d/.codingkeeper/loop.halt" ] || return 1
     [ -d "$d" ] || return 1
     ( cd "$d" || exit 1
-      # The resumed runner enforces the same policy for the full child lifetime.
-      # 9-12 全关: patrol 期间 bash 把锁 fd 暂存在 10 (+1/2 的存槽), 长命 runner
-      # 继承它 = 永久持锁, 看门狗死后永远重启不了 (2026-11-10 舰队扩编时实证)。
       CODEXC_ACTIVE_WINDOW="$CODEXC_ACTIVE_WINDOW" CODEXC_ACTIVE_TZ="$CODEXC_ACTIVE_TZ" \
-      CODEXC_REVIEW_CMD="$d/.codingkeeper/review-leaf.sh" nohup zcodec run >> "$LOG" 2>&1 9>&- 10>&- 11>&- 12>&- & )
+      CODEXC_REVIEW_CMD="$d/.codingkeeper/review-leaf.sh" python3 - "$LOG" <<'PYREVIVE'
+import subprocess, sys
+with open(sys.argv[1], 'ab') as output:
+    subprocess.Popen(['nohup', 'zcodec', 'run'], stdin=subprocess.DEVNULL,
+                     stdout=output, stderr=subprocess.STDOUT,
+                     close_fds=True, start_new_session=True)
+PYREVIVE
+    )
 }
 
 # 探测会话自动清理: 看门狗的健康探测 (replyOK) 会在 zcode db 留会话行,
