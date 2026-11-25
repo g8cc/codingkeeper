@@ -8,6 +8,8 @@
 
 当前记录：
 
+- [2026-11-25 实装漂移与真实交互验收](2026-11-25-installed-qualification.md)
+
 - [2026-11-23 最终复审、提交与推送](2026-11-23-final-review-push.md)
 
 - [2026-11-20 从 KeyDrop 恢复工具配置](2026-11-20-keydrop-provider-recovery.md)

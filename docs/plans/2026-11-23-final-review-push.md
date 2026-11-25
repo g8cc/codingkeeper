@@ -1,6 +1,6 @@
 # 最终复审、提交与推送
 
-状态：前两次源码提交与推送已完成；远端 CI 暴露证据收集缺陷，正在补回归并复验。用户已授权提交并 push；沿用原并行审计授权。
+状态：已完成。源码与 CI 修复均已提交推送，`27fa35d` 的远端 full、证据收集与上传通过。用户已授权提交并 push；沿用原并行审计授权。
 
 后续：首轮 full 及提交推送已完成；远端发现已退役 runner 镜像，追加最小 CI 修复和回归，
 再走同一完整提交门禁。
@@ -114,5 +114,12 @@ GitHub run `45183708043` 在测试开始前被取消，平台 annotation 为
 保留隐藏日志，过滤运行时节点、符号链接与编译缓存。损坏报告与普通复制错误
 仍必须失败；缺失报告或已清理产物不掩盖上游步骤的原始结果。
 
-下一步：运行 harness-runner、quick 和真实 pre-commit full；通过后正常 push，
-分别核对远端测试、证据收集与上传。当前不将远端 CI 写作成功，不新增发布承诺。
+后续验证已完成：harness-runner、quick 和真实 pre-commit full 通过。最终本地 56 行为
+53 pass、2 pass_with_skips、1 inventory report；Swift 探针超时和隔离 HOME 的两项
+实装检查跳过。41 个 unittest 套件共 619 用例（含两项跳过）。187 个文件的受测指纹
+与提交树一致，形成 `27fa35d` 并正常推送。远端 run `45204941766` 的测试、证据收集
+和上传均成功，54 pass、1 pass_with_skips、1 inventory report；远端 Swift 实际通过，
+只跳过两项实装检查。交付记录保存在本轮私有验证目录 `ci-artifacts/delivery.json`。
+
+源码与 CI 收敛不等于公开发布。实装和真实交互的后续结果见
+[11 月 25 日验收](2026-11-25-installed-qualification.md)。

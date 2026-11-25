@@ -12,6 +12,7 @@ import os
 import plistlib
 import json
 import signal
+import shutil
 
 os.environ['CODEXC_FLEET_TEMP_FILTER'] = '0'  # fixture 舰队建在临时根下 — 服务端过滤会让位
 import sys
@@ -309,23 +310,150 @@ class WatchdogDeployAudit(unittest.TestCase):
 
     # ---- 机器态断言 (部署过的机器上不得漂移) ----
 
+    def deployed_fixture(self):
+        sources = sorted({ROOT / 'burn-watch.sh', ROOT / 'codexc-daily',
+                          *ROOT.glob('ck-*.py'), *ROOT.glob('ck-*.sh')})
+        runtime = self.home / '.codingkeeper' / 'bin'
+        runtime.mkdir(parents=True, exist_ok=True)
+        for source in sources:
+            shutil.copy2(source, runtime / source.name)
+        agents = self.home / 'Library' / 'LaunchAgents'
+        agents.mkdir(parents=True, exist_ok=True)
+        plists = []
+        for label in ('com.codingkeeper.watchdog', 'com.codexc.daily',
+                      'com.codingkeeper.watchdog-alive'):
+            source = ROOT / 'packaging' / (label + '.plist')
+            value = plistlib.loads(source.read_bytes().replace(
+                b'/Users/wardonguo', str(self.home).encode()))
+            installed = agents / source.name
+            installed.write_bytes(plistlib.dumps(value, fmt=plistlib.FMT_BINARY))
+            plists.append(installed)
+        return [runtime / source.name for source in sources], plists
+
+    def installed_probe(self, method):
+        result = unittest.TestResult()
+        with patch.dict(globals(), HOME=self.home):
+            WatchdogDeployAudit(method).run(result)
+        return result
+
+    def assert_probe_failed(self, result, name):
+        self.assertFalse(result.skipped, name)
+        self.assertEqual(len(result.failures), 1, name)
+        self.assertFalse(result.errors, name)
+
+    def deployment_present(self):
+        runtime = HOME / '.codingkeeper' / 'bin'
+        sources = {ROOT / 'burn-watch.sh', ROOT / 'codexc-daily',
+                   *ROOT.glob('ck-*.py'), *ROOT.glob('ck-*.sh')}
+        paths = [runtime / source.name for source in sources]
+        paths.extend(HOME / 'Library' / 'LaunchAgents' / (label + '.plist')
+                     for label in ('com.codingkeeper.watchdog', 'com.codexc.daily',
+                                   'com.codingkeeper.watchdog-alive'))
+        return any(path.exists() or path.is_symlink() for path in paths)
+
+    def test_runtime_probe_checks_every_installed_file(self):
+        installed_files, _ = self.deployed_fixture()
+        method = 'test_runtime_copy_matches_repo_if_present'
+        self.assertTrue(self.installed_probe(method).wasSuccessful())
+        for installed in installed_files:
+            original = installed.read_bytes()
+            for damage in ('stale', 'missing'):
+                with self.subTest(file=installed.name, damage=damage):
+                    try:
+                        if damage == 'stale':
+                            installed.write_bytes(b'stale runtime\n')
+                        else:
+                            installed.unlink()
+                        self.assert_probe_failed(self.installed_probe(method), installed.name)
+                    finally:
+                        installed.write_bytes(original)
+
+    def test_runtime_probe_rejects_partial_install_without_main_script(self):
+        runtime = self.home / '.codingkeeper' / 'bin'
+        runtime.mkdir()
+        shutil.copy2(ROOT / 'ck-provider.py', runtime / 'ck-provider.py')
+        result = self.installed_probe('test_runtime_copy_matches_repo_if_present')
+        self.assert_probe_failed(result, 'partial runtime')
+
+    def test_installed_probes_skip_only_when_not_deployed(self):
+        for method in ('test_runtime_copy_matches_repo_if_present',
+                       'test_installed_plist_matches_packaging_if_present'):
+            with self.subTest(method=method):
+                result = self.installed_probe(method)
+                self.assertEqual(len(result.skipped), 1)
+                self.assertTrue(result.wasSuccessful())
+
+    def test_installed_probes_reject_entire_missing_component(self):
+        for missing in ('runtime', 'plists'):
+            with self.subTest(missing=missing):
+                runtime, plists = self.deployed_fixture()
+                targets = runtime if missing == 'runtime' else plists
+                for target in targets:
+                    target.unlink()
+                method = ('test_runtime_copy_matches_repo_if_present' if missing == 'runtime'
+                          else 'test_installed_plist_matches_packaging_if_present')
+                self.assert_probe_failed(self.installed_probe(method), missing)
+
+    def test_plist_probe_accepts_relocated_home_and_binary_format(self):
+        self.deployed_fixture()
+        result = self.installed_probe('test_installed_plist_matches_packaging_if_present')
+        self.assertFalse(result.skipped)
+        self.assertEqual(result.failures, [])
+        self.assertEqual(result.errors, [])
+
+    def test_plist_probe_checks_all_jobs_and_partial_installation(self):
+        _, installed_files = self.deployed_fixture()
+        for installed in installed_files:
+            original = installed.read_bytes()
+            for damage in ('stale', 'missing'):
+                with self.subTest(file=installed.name, damage=damage):
+                    try:
+                        if damage == 'stale':
+                            value = plistlib.loads(original)
+                            value['ProgramArguments'] = ['/old/runtime']
+                            installed.write_bytes(plistlib.dumps(value))
+                        else:
+                            installed.unlink()
+                        result = self.installed_probe('test_installed_plist_matches_packaging_if_present')
+                        self.assert_probe_failed(result, installed.name)
+                    finally:
+                        installed.write_bytes(original)
+
     def test_runtime_copy_matches_repo_if_present(self):
-        runtime = HOME / '.codingkeeper' / 'bin' / 'burn-watch.sh'
-        if not runtime.exists():
+        sources = sorted({ROOT / 'burn-watch.sh', ROOT / 'codexc-daily',
+                          *ROOT.glob('ck-*.py'), *ROOT.glob('ck-*.sh')})
+        runtime = HOME / '.codingkeeper' / 'bin'
+        targets = [runtime / source.name for source in sources]
+        if not self.deployment_present():
             self.skipTest('运行位尚未部署 (packaging/install-watchdog.sh)')
-        self.assertEqual(runtime.read_bytes(), (ROOT / 'burn-watch.sh').read_bytes(),
-                         '运行副本与仓库漂移 — 重跑 packaging/install-watchdog.sh')
+        for source, target in zip(sources, targets):
+            self.assertTrue(target.is_file(), f'{target.name} 运行副本缺失或非普通文件')
+            self.assertTrue(target.read_bytes() == source.read_bytes(),
+                            f'{target.name} 运行副本与仓库漂移 — 按发布流程同步安装')
 
     def test_installed_plist_matches_packaging_if_present(self):
-        for source, installed_path in (
-                (ROOT / 'packaging' / 'com.codingkeeper.watchdog.plist',
-                 HOME / 'Library' / 'LaunchAgents' / 'com.codingkeeper.watchdog.plist'),
-                (ROOT / 'packaging' / 'com.codexc.daily.plist',
-                 HOME / 'Library' / 'LaunchAgents' / 'com.codexc.daily.plist')):
-            if not installed_path.exists():
-                self.skipTest(f'{installed_path.name} 未安装')
-            self.assertEqual(installed_path.read_bytes(), source.read_bytes(),
-                             f'{installed_path.name} 与 packaging 源漂移 — 重跑 packaging/install-watchdog.sh')
+        labels = ('com.codingkeeper.watchdog', 'com.codexc.daily',
+                  'com.codingkeeper.watchdog-alive')
+        agents = HOME / 'Library' / 'LaunchAgents'
+        installed = [agents / (label + '.plist') for label in labels]
+        if not self.deployment_present():
+            self.skipTest('launchd 作业尚未安装 (packaging/install-watchdog.sh)')
+
+        def relocate(value):
+            if isinstance(value, str):
+                return value.replace('/Users/wardonguo', str(HOME))
+            if isinstance(value, list):
+                return [relocate(item) for item in value]
+            if isinstance(value, dict):
+                return {key: relocate(item) for key, item in value.items()}
+            return value
+
+        for installed_path in installed:
+            self.assertTrue(installed_path.is_file(), f'{installed_path.name} 安装不完整')
+            source = ROOT / 'packaging' / installed_path.name
+            self.assertEqual(plistlib.loads(installed_path.read_bytes()),
+                             relocate(plistlib.loads(source.read_bytes())),
+                             f'{installed_path.name} 与 packaging 源漂移 — 按发布流程同步安装')
 
     # ---- 进程级回归: __locked-run 在 fd 9 开启 (未持锁) 时必须存活 ----
 

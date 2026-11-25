@@ -41,6 +41,11 @@ watchdog、faultinjection、conformance、docs、keys 六项。一个 audit 可�
 用例；`keys` 仍仅为库存报告。新增既有套件内的回归不会增加顶层行数。
 用例、断言、场景数量不能混加为覆盖率，也不证明无缺陷或下游产品达到商用要求。
 
+watchdog-deploy 的实装检查比较全部运行脚本与共享 helper，以及按当前 HOME 重定位的
+三个 launchd plist（比较解析后的配置，不要求 XML 排版一致）。只有两组均未部署时
+明确 SKIP；部分安装、整组缺失或内容漂移必须失败。离线夹具另覆盖逐文件缺失与漂移，
+但隔离 HOME 的 full 不能代替真实 HOME 的安装检查或 launchd 当前加载参数核对。
+
 ## 隔离、报告与保留
 
 `tests/isolate.py` 建立私有 HOME、TMPDIR、工具状态目录、tmux socket 和进程组，重置继承的 `CODEX_*` / `CODEXC_*`、tmux 等运行配置，并屏蔽桌面通知。它不是操作系统网络沙箱；离线行为依靠测试使用假 CLI 和显式门控。结束时终止本次进程组和私有 tmux；取消退出非零，清理失败不能得到通过结论。夹具自己创建的新 session/daemon 要由对应测试显式管理。

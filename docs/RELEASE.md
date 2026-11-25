@@ -32,7 +32,9 @@ tests/run-all --profile full --keep-artifacts --report /private/tmp/ck-release-r
 1. 确定发布目标、当前运行实例和原版本备份。检查安装脚本将写到的路径及将操作的服务，不在测试阶段顺手安装。
 2. 先停止目标实例，或准备验证后的新 inode 再原子替换；禁止原地覆盖正在被 Bash 读取的脚本。
 3. 在已授权的部署范围运行安装操作。`install.sh` 负责安装入口与桌面编译，`packaging/install-watchdog.sh` 有独立服务影响；修改前阅读当前脚本，而不是照抄历史机器的服务路径。
-4. 通过真实可执行路径、版本、launchd 配置和用户视图确认生效。只看到仓库 HEAD 更新不能证明部署成功。
+4. 比较全部 runtime 脚本与共享 helper，不能只比主 watchdog；核对三个已安装 plist
+   及 launchd 当前加载参数。通过真实可执行路径、版本和用户视图确认生效。
+   只看到仓库 HEAD 更新不能证明部署成功，磁盘副本更新也不证明长驻进程已重新加载。
 
 本仓库的 GitHub Actions 运行相同 full profile 并上传日志/报告；它不安装本机服务、不读取真实工具凭证、不发布制品。远端 CI 结果需要在推送后另行查看，创建 workflow 文件本身不代表 CI 已通过。
 
